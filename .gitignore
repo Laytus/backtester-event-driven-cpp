@@ -1,0 +1,117 @@
+# =========================================================
+# Build systems / CMake
+# =========================================================
+
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+DartConfiguration.tcl
+Testing/
+
+# =========================================================
+# C / C++ artifacts
+# =========================================================
+
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+*.d
+*.gcda
+*.gcno
+*.gcov
+
+# =========================================================
+# Python environments and caches
+# =========================================================
+
+.venv/
+venv/
+env/
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+
+# Packaging / metadata
+*.egg-info/
+dist/
+wheelhouse/
+
+# =========================================================
+# Project data
+# =========================================================
+
+# Provider-originated or generated datasets
+data/raw/*
+data/processed/*
+data/results/*
+
+# Keep directory structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/results/.gitkeep
+
+# Deterministic test fixtures ARE versioned
+# data/fixtures/ is intentionally not ignored.
+
+# =========================================================
+# Generated outputs
+# =========================================================
+
+output/
+outputs/
+
+# =========================================================
+# Logs and temporary files
+# =========================================================
+
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# =========================================================
+# IDE / editor
+# =========================================================
+
+.vscode/
+.idea/
+
+*.code-workspace
+
+# =========================================================
+# macOS
+# =========================================================
+
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# =========================================================
+# Miscellaneous
+# =========================================================
+
+Thumbs.db
+Desktop.ini
