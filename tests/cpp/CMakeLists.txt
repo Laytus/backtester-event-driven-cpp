@@ -8,7 +8,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Catch2)
 
-add_executable(backtester_tests test_version.cpp)
+add_executable(
+    backtester_tests
+    test_version.cpp
+    test_bar.cpp
+)
 target_link_libraries(backtester_tests PRIVATE backtester::core Catch2::Catch2WithMain)
 target_compile_features(backtester_tests PRIVATE cxx_std_23)
 

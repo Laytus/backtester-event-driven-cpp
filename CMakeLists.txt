@@ -20,12 +20,14 @@ target_sources(
     backtester_core
     PRIVATE
         src/version.cpp
+        src/market/bar.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
             include
         FILES
             include/backtester/version.hpp
+            include/backtester/market/bar.hpp
 )
 
 target_compile_features(
