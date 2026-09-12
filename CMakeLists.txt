@@ -21,6 +21,7 @@ target_sources(
     PRIVATE
         src/version.cpp
         src/market/bar.cpp
+        src/data/csv_bar_reader.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -28,6 +29,7 @@ target_sources(
         FILES
             include/backtester/version.hpp
             include/backtester/market/bar.hpp
+            include/backtester/data/csv_bar_reader.hpp
 )
 
 target_compile_features(

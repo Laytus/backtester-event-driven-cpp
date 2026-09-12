@@ -6,16 +6,36 @@ FetchContent_Declare(
     GIT_TAG v3.7.1
     GIT_SHALLOW TRUE
 )
+
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(
     backtester_tests
     test_version.cpp
     test_bar.cpp
+    test_csv_bar_reader.cpp
 )
-target_link_libraries(backtester_tests PRIVATE backtester::core Catch2::Catch2WithMain)
-target_compile_features(backtester_tests PRIVATE cxx_std_23)
+
+target_link_libraries(
+    backtester_tests
+    PRIVATE
+        backtester::core
+        Catch2::Catch2WithMain
+)
+
+target_compile_features(
+    backtester_tests
+    PRIVATE
+        cxx_std_23
+)
+
+target_compile_definitions(
+    backtester_tests
+    PRIVATE
+        BACKTESTER_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
 
 include(Catch)
+
 catch_discover_tests(backtester_tests)
 
