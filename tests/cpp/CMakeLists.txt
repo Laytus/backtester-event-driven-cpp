@@ -14,6 +14,7 @@ add_executable(
     test_version.cpp
     test_bar.cpp
     test_csv_bar_reader.cpp
+    test_historical_data_feed.cpp
 )
 
 target_link_libraries(

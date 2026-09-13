@@ -22,6 +22,7 @@ target_sources(
         src/version.cpp
         src/market/bar.cpp
         src/data/csv_bar_reader.cpp
+        src/data/historical_data_feed.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -30,6 +31,7 @@ target_sources(
             include/backtester/version.hpp
             include/backtester/market/bar.hpp
             include/backtester/data/csv_bar_reader.hpp
+            include/backtester/data/historical_data_feed.hpp
 )
 
 target_compile_features(
