@@ -66,6 +66,7 @@ wheelhouse/
 data/raw/*
 data/processed/*
 data/results/*
+data/canonical/*
 
 # Keep directory structure
 !data/raw/.gitkeep
