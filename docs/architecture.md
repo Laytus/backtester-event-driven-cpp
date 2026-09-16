@@ -55,9 +55,13 @@ The target is:
 The complete project contains two main technical environments.
 
 ```text
-Python Tooling
+Python Data Tooling
         │
-        │ acquisition / validation / normalization
+        │ yfinance acquisition
+        ▼
+Raw Provider Dataset + Acquisition Metadata
+        │
+        │ provider validation / symbol selection / normalization
         ▼
 Canonical Historical Dataset
         │
@@ -72,9 +76,12 @@ CSV Outputs
 Python Analysis / Visualization
 ```
 
-Python supports the backtester.
+Python supports the backtester by owning provider-specific acquisition,
+normalization, persistence, and later analysis/visualization.
 
-C++ owns the core simulation.
+C++ owns the provider-independent simulation core.
+
+The durable boundary between the two environments is the canonical CSV contract.
 
 ---
 
@@ -142,29 +149,79 @@ boundaries.
 
 # 5. Data Infrastructure
 
-The data layer converts a canonical dataset into sequential market observations.
+The Phase 1 data architecture is implemented as two explicit layers separated by
+the canonical CSV contract.
 
-## Components
+## Python provider layer
+
+Implemented components:
+
+- `acquisition.py`
+- `validation.py`
+- `normalization.py`
+- `persistence.py`
+- `pipeline.py`
+- `scripts/build_daily_data.py`
+
+Implemented flow:
+
+```text
+Yahoo Finance
+        ↓
+yf.download(...)
+        ↓
+raw provider DataFrame
+        ↓
+raw CSV + acquisition metadata persisted
+        ↓
+provider validation
+        ↓
+single-symbol selection
+        ↓
+normalization
+        ↓
+canonical validation
+        ↓
+canonical CSV
+```
+
+Raw provider data are preserved before provider validation so failed acquisitions
+or structurally invalid provider responses remain inspectable.
+
+## Canonical boundary
+
+The exact MVP canonical CSV schema is:
+
+```text
+session_date,symbol,open,high,low,close,volume
+```
+
+The canonical representation is provider-independent.
+
+## C++ data layer
+
+Implemented components:
 
 - `Bar`
 - `CsvBarReader`
 - `HistoricalDataFeed`
 
-Conceptual flow:
+Implemented flow:
 
 ```text
 Canonical CSV
         ↓
-CsvBarReader
+CsvBarReader::read(...)
         ↓
-std::vector<Bar> or equivalent validated storage
+std::vector<Bar>
         ↓
 HistoricalDataFeed
         ↓
 sequential observable bars
 ```
 
-Provider-specific acquisition and normalization remain outside this C++ layer.
+Provider-specific acquisition and normalization do not enter the C++ domain
+dependency graph.
 
 ---
 
@@ -174,45 +231,39 @@ Provider-specific acquisition and normalization remain outside this C++ layer.
 
 Represent one canonical daily OHLCV observation.
 
-## Suggested Data
+## Implemented Data Contract
 
-Conceptually:
+`Bar` uses:
 
-```cpp
-struct Bar {
-    Timestamp timestamp;
-    double open;
-    double high;
-    double low;
-    double close;
-    double volume;
-};
-```
+- `SessionDate = std::chrono::year_month_day`;
+- `std::string` symbol;
+- `double` open;
+- `double` high;
+- `double` low;
+- `double` close;
+- `std::uint64_t` volume.
 
-The exact timestamp type should use `std::chrono`-based semantics.
-
-The exact volume type should be chosen during implementation based on the
-canonical dataset contract.
+The session date represents the exchange-local daily trading session as a
+calendar date. The MVP does not attach an intraday timestamp to a daily bar.
 
 ## Invariants
 
-A valid `Bar` should satisfy the canonical data rules established by the data
-pipeline.
+Construction rejects a bar unless:
 
-Examples may include:
-
-- valid timestamp;
-- finite numeric values;
-- positive prices where required;
+- the calendar date is valid;
+- the symbol is non-empty;
+- all prices are finite;
+- all prices are strictly positive;
 - `high >= open`;
 - `high >= close`;
-- `low <= open`;
-- `low <= close`;
 - `high >= low`;
-- non-negative volume.
+- `low <= open`;
+- `low <= close`.
 
-Validation responsibilities between Python normalization and C++ parsing should
-remain explicit.
+Volume is unsigned and zero volume is allowed.
+
+The interface is logically immutable after successful construction: state is
+private, access is read-only, and no setters are exposed.
 
 ## Ownership
 
@@ -229,14 +280,56 @@ It does not own external resources.
 Parse the provider-independent canonical CSV format into validated `Bar`
 objects.
 
-## Inputs
+## Implemented Interface
 
-- canonical CSV path or input stream.
+The reader exposes a stateless class-level operation equivalent to:
 
-## Outputs
+```cpp
+static std::vector<market::Bar> read(
+    const std::filesystem::path& path
+);
+```
 
-- successfully parsed bars;
-- explicit parsing/validation error.
+## Input Contract
+
+The CSV header must be exactly:
+
+```text
+session_date,symbol,open,high,low,close,volume
+```
+
+Rows must preserve the canonical representation established by the Python data
+pipeline.
+
+## Output
+
+A successfully parsed file produces:
+
+```text
+std::vector<Bar>
+```
+
+in file order.
+
+## Validation Responsibilities
+
+The reader rejects, with explicit contextual errors:
+
+- files that cannot be opened;
+- invalid headers;
+- wrong column counts;
+- invalid calendar dates;
+- missing required values;
+- malformed numeric values;
+- invalid `Bar` invariants;
+- duplicate session dates;
+- non-monotonic session dates;
+- mixed symbols in one canonical dataset.
+
+Errors include file/line context where applicable.
+
+The reader does not sort, repair, fill, interpolate, or otherwise alter
+ambiguous input.
 
 ## Must Not
 
@@ -246,57 +339,54 @@ objects.
 - implement strategy logic;
 - expose future-data semantics.
 
-## Important Failure Modes
-
-- missing required columns;
-- malformed numeric values;
-- invalid timestamps;
-- missing values;
-- duplicate timestamps;
-- non-monotonic timestamps;
-- invalid rows.
-
-## Design Principle
-
-Parsing errors must be explicit.
-
-The reader should not silently repair ambiguous input.
-
 ---
 
 # 8. HistoricalDataFeed
 
 ## Responsibility
 
-Reveal historical bars sequentially as simulated time advances.
+Reveal validated historical bars sequentially as simulated time advances.
+
+## Implemented Interface
+
+The feed owns its historical data by value:
+
+```cpp
+explicit HistoricalDataFeed(std::vector<market::Bar> bars);
+
+[[nodiscard]]
+std::optional<market::Bar> next();
+```
 
 ## Owned State
 
-Conceptually:
+The implemented state is:
 
-- historical bar storage or reference to immutable storage;
-- current cursor/index;
-- end-of-data state.
+- `std::vector<Bar>` historical storage;
+- a `std::size_t` cursor identifying the next unread bar.
+
+The constructor receives the vector by value and moves it into owned storage.
 
 ## Public Behavior
 
-The feed should support operations equivalent to:
+`next()` returns the next bar exactly once.
 
-```text
-has_next()
-next()
+After the final bar, it returns:
+
+```cpp
+std::nullopt
 ```
 
-or another minimal interface with the same semantics.
+Repeated calls after exhaustion continue returning `std::nullopt`.
 
-The exact interface should be chosen during Phase 1.
+There is no public random-access API and no public method exposing future bars.
 
 ## Invariants
 
-- bars are exposed chronologically;
+- input order is preserved;
 - each bar is exposed at most once;
-- future bars cannot be retrieved through arbitrary indexing in normal engine
-  use;
+- no bar is skipped by normal sequential use;
+- future bars cannot be retrieved through arbitrary indexing;
 - end-of-data behavior is deterministic.
 
 ## Must Not
@@ -1385,15 +1475,17 @@ The important principle is:
 
 ---
 
-# 45. Proposed Repository Structure
+# 45. Repository Structure
 
-The exact repository may evolve, but the initial structure should remain small.
+The repository grows only when real components are implemented.
+
+After Phase 1, the relevant implemented structure is conceptually:
 
 ```text
 event-driven-backtester/
 ├── CMakeLists.txt
 ├── CMakePresets.json
-├── README.md
+├── pyproject.toml
 │
 ├── docs/
 │   ├── MVP-scope.md
@@ -1401,46 +1493,58 @@ event-driven-backtester/
 │   ├── references.md
 │   ├── development-guide.md
 │   ├── knowledge-guide.md
-│   └── architecture.md
+│   ├── architecture.md
+│   └── practical_cpp_notes.md
 │
 ├── include/
 │   └── backtester/
-│       ├── data/
-│       ├── events/
-│       ├── strategy/
-│       ├── portfolio/
-│       ├── execution/
-│       ├── performance/
-│       └── engine/
+│       └── data/
+│           ├── bar.hpp
+│           ├── csv_bar_reader.hpp
+│           └── historical_data_feed.hpp
 │
 ├── src/
-│   ├── data/
-│   ├── strategy/
-│   ├── portfolio/
-│   ├── execution/
-│   ├── performance/
-│   ├── engine/
-│   └── main.cpp
-│
-├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── fixtures/
+│   └── data/
+│       ├── bar.cpp
+│       ├── csv_bar_reader.cpp
+│       └── historical_data_feed.cpp
 │
 ├── python/
-│   ├── data/
-│   ├── analysis/
-│   └── tests/
+│   └── backtester_data/
+│       ├── acquisition.py
+│       ├── validation.py
+│       ├── normalization.py
+│       ├── persistence.py
+│       └── pipeline.py
+│
+├── scripts/
+│   └── build_daily_data.py
+│
+├── tests/
+│   ├── cpp/
+│   │   ├── test_bar.cpp
+│   │   ├── test_csv_bar_reader.cpp
+│   │   ├── test_historical_data_feed.cpp
+│   │   └── test_csv_historical_data_feed.cpp
+│   └── python/
+│       ├── test_acquisition.py
+│       ├── test_validation.py
+│       ├── test_normalization.py
+│       ├── test_persistence.py
+│       └── test_pipeline.py
 │
 ├── data/
+│   ├── fixtures/
 │   ├── raw/
 │   └── canonical/
 │
 └── output/
 ```
 
-This is a starting point, not a requirement to create empty directories before
-they are needed.
+Later-phase directories should be created only when their components actually
+exist.
+
+Do not create empty architecture merely to match a planned tree.
 
 ---
 
@@ -1549,19 +1653,65 @@ reduce quality or waste significant development effort.
 
 Python is intentionally outside the simulation core.
 
-Suggested responsibilities:
+## Implemented Phase 1 Data Modules
 
-## Data
+### `acquisition.py`
+
+Owns Yahoo Finance acquisition and acquisition metadata construction.
+
+It calls `yf.download()` with explicit MVP parameters and performs no
+normalization or file writing.
+
+### `validation.py`
+
+Owns provider-boundary and canonical-data validation.
+
+It rejects invalid data and does not repair, sort, fill, interpolate, or
+fabricate observations.
+
+### `normalization.py`
+
+Owns:
+
+```text
+Yahoo MultiIndex representation
+→ selected single-symbol provider data
+→ canonical daily-bar representation
+```
+
+It uses provider `Open`, `High`, `Low`, `Close`, and `Volume`.
+
+`Adj Close` and corporate-action columns are not mapped into canonical OHLCV.
+
+### `persistence.py`
+
+Owns serialization of:
+
+- raw provider CSV;
+- acquisition metadata JSON;
+- canonical CSV.
+
+Existing artifacts are not overwritten silently.
+
+### `pipeline.py`
+
+Owns orchestration only:
 
 ```text
 download
-→ preserve raw data
+→ preserve raw + metadata
+→ validate provider data
+→ select symbol
 → normalize
-→ validate
-→ write canonical CSV
+→ validate canonical data
+→ persist canonical CSV
 ```
 
-## Analysis
+### `scripts/build_daily_data.py`
+
+Provides the thin CLI entry point for building canonical daily data.
+
+## Later Analysis Responsibilities
 
 ```text
 read backtest outputs
@@ -1569,23 +1719,23 @@ read backtest outputs
 → optional external validation
 ```
 
-## Tests
+## Testing Boundary
 
-Python-side tests should validate provider-specific and normalization behavior.
+Python tests validate provider-specific acquisition, normalization, validation,
+persistence, and pipeline behavior.
 
-C++ tests validate the canonical-domain and simulation behavior.
+C++ tests validate the canonical-domain representation and simulation behavior.
 
 ---
 
 # 51. Data Directory Policy
 
-Conceptually:
-
 ```text
 data/raw/
 ```
 
-contains provider-originated data preserved for traceability.
+contains provider-originated data preserved for traceability together with
+acquisition metadata.
 
 ```text
 data/canonical/
@@ -1593,9 +1743,15 @@ data/canonical/
 
 contains normalized provider-independent datasets.
 
-Large datasets should generally not be committed.
+```text
+data/fixtures/
+```
 
-Small deterministic fixtures used by tests should be committed under `tests/`.
+contains small deterministic canonical fixtures used by C++ tests.
+
+Live-generated raw and canonical datasets should generally not be committed.
+
+Deterministic fixtures required by the test suite should be committed.
 
 ---
 
@@ -1620,6 +1776,12 @@ Every mutable state item should have one obvious owner.
 
 | Component | Responsibility | Must Not |
 |---|---|---|
+| Python acquisition | Acquire provider data and metadata | Normalize or simulate |
+| Python validation | Enforce provider/canonical data contracts | Repair ambiguous data |
+| Python normalization | Map provider representation to canonical representation | Apply hidden price adjustments |
+| Python persistence | Serialize raw, metadata, and canonical artifacts | Silently overwrite evidence |
+| Python pipeline | Orchestrate the data workflow | Absorb validation or normalization rules |
+| `Bar` | Represent one valid canonical daily observation | Know provider details |
 | `CsvBarReader` | Parse canonical data | Know provider details |
 | `HistoricalDataFeed` | Reveal bars sequentially | Generate signals |
 | `Strategy` | Generate trading intent | Modify portfolio |
@@ -1734,6 +1896,17 @@ found:
 - one instrument;
 - daily OHLCV;
 - provider-independent canonical dataset;
+- canonical CSV schema:
+  `session_date,symbol,open,high,low,close,volume`;
+- `session_date` is an exchange-local daily session date represented as
+  `YYYY-MM-DD`, not an intraday timestamp;
+- canonical OHLC uses provider `Open`, `High`, `Low`, and `Close`;
+- `Adj Close` is not used as canonical close;
+- no manual second split adjustment or dividend adjustment is applied in
+  normalization;
+- canonical volume must be non-negative and integer-valued;
+- raw provider output is preserved separately from canonical data;
+- live/provider artifacts are not used as permanent deterministic fixtures;
 - event-driven sequential engine;
 - explicit signal/order/fill distinction;
 - long/flat trading behavior;
@@ -1752,12 +1925,19 @@ found:
 
 ## Phase 1
 
-Build:
+Implemented:
 
 ```text
+Yahoo acquisition workflow
+raw-data preservation + metadata
+provider validation
+provider-specific normalization
+canonical validation
+canonical CSV persistence
 Bar
 CsvBarReader
 HistoricalDataFeed
+CsvBarReader → HistoricalDataFeed integration
 ```
 
 ## Phase 2
@@ -1833,27 +2013,53 @@ an abandoned design.
 
 ---
 
-# 59. Initial Implementation Boundary
+# 59. Phase 1 Implementation Outcome
 
-Once the core documents are frozen, the first implementation task should be:
+Phase 1 established and validated the complete historical-data boundary required
+by the simulation.
+
+The implemented path is:
 
 ```text
-Define the canonical Bar contract
+Yahoo Finance
         ↓
-implement Bar
+Python acquisition
         ↓
-create deterministic fixtures
+raw CSV + metadata
         ↓
-implement canonical CSV parsing
+provider validation
         ↓
-validate parser behavior
+provider-specific normalization
+        ↓
+canonical validation
+        ↓
+canonical CSV
+        ↓
+CsvBarReader
+        ↓
+std::vector<Bar>
+        ↓
+HistoricalDataFeed
+        ↓
+sequential Bar delivery
 ```
 
-This begins Phase 1 without requiring the rest of the architecture to be
-implemented first.
+The implementation was validated at multiple levels:
 
-The engine should grow from validated foundations rather than from skeleton
-classes.
+- deterministic Python unit and pipeline tests;
+- deterministic C++ unit tests;
+- a C++ integration test for
+  `CsvBarReader → HistoricalDataFeed`;
+- a live Yahoo Finance smoke test;
+- a real producer-to-consumer smoke test where a Python-generated canonical CSV
+  was successfully consumed by the actual C++ `CsvBarReader`;
+- Debug and Release C++ test execution.
+
+No additional production glue component was required between `CsvBarReader` and
+`HistoricalDataFeed`.
+
+Phase 2 can therefore build the event-driven engine on top of a trusted,
+provider-independent, sequential market-data foundation.
 
 ---
 
