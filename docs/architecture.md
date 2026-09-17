@@ -2,12 +2,9 @@
 
 > **Purpose**
 >
-> This document defines the evolving technical architecture of the
-> Event-Driven Backtester.
+> This document defines the evolving technical architecture of the Event-Driven Backtester.
 >
-> It translates the conceptual model and MVP scope into concrete software
-> components, responsibilities, ownership rules, interfaces, invariants, and
-> dependencies.
+> It translates the conceptual model and MVP scope into concrete software components, responsibilities, ownership rules, interfaces, invariants, and dependencies.
 >
 > Unlike the other core project documents, this is a **living document**.
 > It should evolve when implementation reveals a better architectural decision.
@@ -26,13 +23,13 @@
 
 The MVP architecture must support a backtester that is:
 
-- deterministic;
-- sequential;
-- testable;
-- reproducible;
-- easy to explain;
-- small enough to understand completely;
-- extensible through clean component boundaries.
+- deterministic
+- sequential
+- testable
+- reproducible
+- easy to explain
+- small enough to understand completely
+- extensible through clean component boundaries
 
 The architecture should avoid both extremes:
 
@@ -45,8 +42,7 @@ speculative framework for future features
 
 The target is:
 
-> The smallest architecture that correctly represents the complete event-driven
-> trading lifecycle required by the MVP.
+> The smallest architecture that correctly represents the complete event-driven trading lifecycle required by the MVP.
 
 ---
 
@@ -76,8 +72,7 @@ CSV Outputs
 Python Analysis / Visualization
 ```
 
-Python supports the backtester by owning provider-specific acquisition,
-normalization, persistence, and later analysis/visualization.
+Python supports the backtester by owning provider-specific acquisition, normalization, persistence, and later analysis/visualization.
 
 C++ owns the provider-independent simulation core.
 
@@ -97,6 +92,8 @@ CsvBarReader
 HistoricalDataFeed
         ↓
 MarketEvent
+        ↓
+EventQueue
         ↓
 BacktestEngine
         ↓
@@ -142,15 +139,13 @@ The MVP can be understood through six logical layers.
 
 These are logical boundaries.
 
-They do not necessarily require separate libraries or complex package
-boundaries.
+They do not necessarily require separate libraries or complex package boundaries.
 
 ---
 
 # 5. Data Infrastructure
 
-The Phase 1 data architecture is implemented as two explicit layers separated by
-the canonical CSV contract.
+The Phase 1 data architecture is implemented as two explicit layers separated by the canonical CSV contract.
 
 ## Python provider layer
 
@@ -185,8 +180,7 @@ canonical validation
 canonical CSV
 ```
 
-Raw provider data are preserved before provider validation so failed acquisitions
-or structurally invalid provider responses remain inspectable.
+Raw provider data are preserved before provider validation so failed acquisitions or structurally invalid provider responses remain inspectable.
 
 ## Canonical boundary
 
@@ -220,8 +214,7 @@ HistoricalDataFeed
 sequential observable bars
 ```
 
-Provider-specific acquisition and normalization do not enter the C++ domain
-dependency graph.
+Provider-specific acquisition and normalization do not enter the C++ domain dependency graph.
 
 ---
 
@@ -235,35 +228,33 @@ Represent one canonical daily OHLCV observation.
 
 `Bar` uses:
 
-- `SessionDate = std::chrono::year_month_day`;
-- `std::string` symbol;
-- `double` open;
-- `double` high;
-- `double` low;
-- `double` close;
-- `std::uint64_t` volume.
+- `SessionDate = std::chrono::year_month_day`
+- `std::string` symbol
+- `double` open
+- `double` high
+- `double` low
+- `double` close
+- `std::uint64_t` volume
 
-The session date represents the exchange-local daily trading session as a
-calendar date. The MVP does not attach an intraday timestamp to a daily bar.
+The session date represents the exchange-local daily trading session as a calendar date. The MVP does not attach an intraday timestamp to a daily bar.
 
 ## Invariants
 
 Construction rejects a bar unless:
 
-- the calendar date is valid;
-- the symbol is non-empty;
-- all prices are finite;
-- all prices are strictly positive;
-- `high >= open`;
-- `high >= close`;
-- `high >= low`;
-- `low <= open`;
-- `low <= close`.
+- the calendar date is valid
+- the symbol is non-empty
+- all prices are finite
+- all prices are strictly positive
+- `high >= open`
+- `high >= close`
+- `high >= low`
+- `low <= open`
+- `low <= close`
 
 Volume is unsigned and zero volume is allowed.
 
-The interface is logically immutable after successful construction: state is
-private, access is read-only, and no setters are exposed.
+The interface is logically immutable after successful construction: state is private, access is read-only, and no setters are exposed.
 
 ## Ownership
 
@@ -277,8 +268,7 @@ It does not own external resources.
 
 ## Responsibility
 
-Parse the provider-independent canonical CSV format into validated `Bar`
-objects.
+Parse the provider-independent canonical CSV format into validated `Bar` objects.
 
 ## Implemented Interface
 
@@ -298,8 +288,7 @@ The CSV header must be exactly:
 session_date,symbol,open,high,low,close,volume
 ```
 
-Rows must preserve the canonical representation established by the Python data
-pipeline.
+Rows must preserve the canonical representation established by the Python data pipeline.
 
 ## Output
 
@@ -315,29 +304,28 @@ in file order.
 
 The reader rejects, with explicit contextual errors:
 
-- files that cannot be opened;
-- invalid headers;
-- wrong column counts;
-- invalid calendar dates;
-- missing required values;
-- malformed numeric values;
-- invalid `Bar` invariants;
-- duplicate session dates;
-- non-monotonic session dates;
-- mixed symbols in one canonical dataset.
+- files that cannot be opened
+- invalid headers
+- wrong column counts
+- invalid calendar dates
+- missing required values
+- malformed numeric values
+- invalid `Bar` invariants
+- duplicate session dates
+- non-monotonic session dates
+- mixed symbols in one canonical dataset
 
 Errors include file/line context where applicable.
 
-The reader does not sort, repair, fill, interpolate, or otherwise alter
-ambiguous input.
+The reader does not sort, repair, fill, interpolate, or otherwise alter ambiguous input.
 
 ## Must Not
 
-- download data;
-- know about `yfinance`;
-- rename provider-specific columns;
-- implement strategy logic;
-- expose future-data semantics.
+- download data
+- know about `yfinance`
+- rename provider-specific columns
+- implement strategy logic
+- expose future-data semantics
 
 ---
 
@@ -362,8 +350,8 @@ std::optional<market::Bar> next();
 
 The implemented state is:
 
-- `std::vector<Bar>` historical storage;
-- a `std::size_t` cursor identifying the next unread bar.
+- `std::vector<Bar>` historical storage
+- a `std::size_t` cursor identifying the next unread bar
 
 The constructor receives the vector by value and moves it into owned storage.
 
@@ -383,18 +371,18 @@ There is no public random-access API and no public method exposing future bars.
 
 ## Invariants
 
-- input order is preserved;
-- each bar is exposed at most once;
-- no bar is skipped by normal sequential use;
-- future bars cannot be retrieved through arbitrary indexing;
-- end-of-data behavior is deterministic.
+- input order is preserved
+- each bar is exposed at most once
+- no bar is skipped by normal sequential use
+- future bars cannot be retrieved through arbitrary indexing
+- end-of-data behavior is deterministic
 
 ## Must Not
 
-- generate strategy signals;
-- modify portfolio state;
-- determine execution;
-- calculate performance.
+- generate strategy signals
+- modify portfolio state
+- determine execution
+- calculate performance
 
 ---
 
@@ -409,18 +397,27 @@ OrderEvent
 FillEvent
 ```
 
-These events form the causal protocol between components.
+They represent distinct stages in the causal trading protocol:
 
-The event model must remain explicit and type-safe.
+```text
+market information
+        ↓
+strategy intent
+        ↓
+trading instruction
+        ↓
+execution
+```
+
+The event model is explicit, type-safe, and value-oriented.
+
+Backtesting and future live trading should preserve the same domain-event semantics where practical. Infrastructure adapters may differ, but the meaning of the events should not.
 
 ---
 
 # 10. Event Representation
 
-The preferred initial C++ direction is a closed event set represented using
-value types.
-
-A likely design is:
+The event protocol uses a closed set of value-like event types:
 
 ```cpp
 using Event = std::variant<
@@ -431,25 +428,24 @@ using Event = std::variant<
 >;
 ```
 
-with dispatch through `std::visit`.
+Dispatch uses:
 
-This is an initial architectural preference, not an immutable requirement.
+```cpp
+std::visit(...)
+```
 
-## Why This Fits the MVP
+This is a fixed MVP architectural decision unless implementation reveals a concrete correctness or extensibility problem.
 
-- the event set is small and known;
-- events are value-like messages;
-- dispatch can remain explicit;
-- ownership is simple;
-- no inheritance hierarchy is required;
-- deterministic behavior is easy to test.
+## Why This Fits the Architecture
 
-## Reconsider Only If
+- the event set is small and explicitly known
+- events are value-like messages
+- dispatch remains explicit and type-safe
+- ownership is simple
+- no inheritance hierarchy or mandatory heap allocation is required
+- deterministic behavior is straightforward to test
 
-Implementation reveals a concrete requirement that makes the closed variant
-model unnecessarily restrictive.
-
-Do not introduce polymorphic heap-allocated events preemptively.
+Runtime-polymorphic event hierarchies should not be introduced without a concrete requirement for dynamically open event types.
 
 ---
 
@@ -457,43 +453,40 @@ Do not introduce polymorphic heap-allocated events preemptively.
 
 ## Meaning
 
-New market information is available.
+A completed market observation has become available to downstream simulation components.
+
+For the MVP, that observation is one completed daily `Bar`.
 
 ## Producer
 
-- `HistoricalDataFeed` directly or through `BacktestEngine`.
+During backtesting:
+
+- `BacktestEngine`, using the next `Bar` delivered by `HistoricalDataFeed`.
+
+A future live implementation may produce equivalent market events from a live market-data adapter.
 
 ## Consumer
 
-- `Strategy`;
-- potentially portfolio valuation logic where appropriate.
+During Phase 2, the event is consumed by the engine's deterministic dispatch path.
 
-## Data
+Later consumers may include:
 
-The event should expose the information required to identify the newly
-available market observation.
+- `Strategy`
+- portfolio valuation logic where appropriate
 
-Two plausible designs are:
+## Payload and Ownership
 
-```text
-MarketEvent owns Bar
-```
+`MarketEvent` owns one `Bar` by value.
 
-or:
+It does not reference `HistoricalDataFeed` storage or depend on feed internals.
 
-```text
-MarketEvent references / identifies currently available Bar
-```
-
-The final choice should minimize lifetime complexity.
-
-For the MVP, value semantics are preferred when practical.
+This keeps event lifetime and ownership explicit and avoids dangling-reference or mutable-shared-state concerns.
 
 ## Timestamp Meaning
 
-The timestamp represents the market observation that has become available.
+`Bar::session_date()` identifies the completed trading session represented by the event.
 
-Time semantics must remain consistent with the completed-bar model.
+For the daily MVP, this is a session date rather than a precise exchange or wall-clock timestamp.
 
 ---
 
@@ -501,39 +494,62 @@ Time semantics must remain consistent with the completed-bar model.
 
 ## Meaning
 
-The strategy expresses trading intent.
+The strategy expresses a desired market exposure based only on currently observable information.
+
+A signal represents trading intent, not an execution instruction.
 
 ## Producer
 
-- `Strategy`.
+- `Strategy`
 
 ## Consumer
 
-- `Portfolio` and/or dedicated order-generation / position-sizing logic.
+- portfolio / position-sizing / order-generation logic.
 
-## Suggested Data
+The exact Phase 3 boundary remains to be implemented.
+
+## Direction Semantics
+
+The durable protocol uses target-exposure semantics:
+
+```text
+Long
+Short
+Flat
+```
+
+Conceptually:
+
+```cpp
+enum class SignalDirection {
+    Long,
+    Short,
+    Flat
+};
+```
+
+`Short` is part of the durable event protocol even though short-selling behavior remains outside the current MVP.
+
+No explicit `Hold` signal is required. The absence of a new `SignalEvent` can represent no change in desired exposure.
+
+## Payload
 
 Conceptually:
 
 ```text
-instrument
-signal type
-signal time
+symbol
+direction
+signal_date
 ```
 
-MVP signal types:
-
-```text
-LONG
-EXIT
-```
+`signal_date` identifies the market session whose observable information caused the signal.
 
 ## Must Not Contain
 
-- execution price;
-- fill price;
-- hidden portfolio mutation;
-- assumed trade result.
+- execution price
+- fill price
+- hidden portfolio mutation
+- assumed trade result
 
 ---
 
@@ -541,46 +557,59 @@ EXIT
 
 ## Meaning
 
-A concrete trading instruction has been created.
+A concrete trading instruction has been created from strategy intent and portfolio/order-generation logic.
+
+An order represents an instruction to attempt execution. It does not imply that execution has already occurred.
 
 ## Producer
 
-- portfolio/order-generation layer after position sizing.
+- portfolio / position-sizing / order-generation layer
 
 ## Consumer
 
-- `ExecutionHandler`.
+During backtesting:
+
+- `ExecutionHandler`
+
+A future live implementation may route equivalent orders through a broker adapter.
 
 ## Required MVP Data
 
 Conceptually:
 
 ```text
-instrument
+symbol
 side
 quantity
-order type
-submission time
+order_type
+submission_date
 ```
 
-MVP order type:
+Required sides:
 
 ```text
-MARKET
+Buy
+Sell
 ```
 
-MVP sides:
+Required MVP order type:
 
 ```text
-BUY
-SELL
+Market
 ```
+
+Additional order types should be added only when corresponding execution semantics are implemented.
+
+## Temporal Meaning
+
+`submission_date` identifies the session after whose observable information the
+order was created.
 
 ## Invariant
 
-Quantity must be valid according to the order contract.
+Quantity must satisfy the order contract.
 
-The order does not modify executed portfolio holdings.
+Creating an `OrderEvent` does not modify executed portfolio holdings.
 
 ---
 
@@ -588,35 +617,58 @@ The order does not modify executed portfolio holdings.
 
 ## Meaning
 
-The simulated order has executed.
+A previously submitted order has been simulated or externally confirmed as executed.
+
+A fill represents an execution fact.
 
 ## Producer
 
+During backtesting:
+
 - `ExecutionHandler`.
+
+A future live implementation may produce equivalent fill information from a broker or execution adapter.
 
 ## Consumer
 
 - `Portfolio`.
 
-## Suggested Data
+## Payload
 
-Conceptually:
+The durable core payload is conceptually:
 
 ```text
-instrument
+symbol
 side
 quantity
-fill price
-fill time
+fill_price
+fill_date
+fees
 ```
 
-Additional fields should be added only if required by accounting.
+For the MVP:
+
+```text
+fees = 0
+```
+
+is valid.
+
+Fees or commissions are execution facts and therefore belong naturally in the fill representation.
+
+## Slippage
+
+Slippage is not a fundamental `FillEvent` field.
+
+It is derived by comparing the actual fill price with a chosen reference price, such as an arrival price, decision price, midpoint, or expected execution price.
+
+Execution-quality metrics such as slippage and implementation shortfall belong to later analytics rather than to the core fill fact.
 
 ## Invariant
 
 A fill represents executed quantity.
 
-Portfolio holdings and cash change as a consequence of fill processing.
+Portfolio holdings and cash change only as a consequence of fill processing.
 
 ---
 
@@ -624,35 +676,42 @@ Portfolio holdings and cash change as a consequence of fill processing.
 
 ## Responsibility
 
-Store pending events awaiting deterministic processing.
+Store domain events that have been produced but not yet processed.
 
-## Initial Design
+`EventQueue` defines deterministic dispatch order.
 
-A simple FIFO queue is sufficient if event creation and processing semantics
-guarantee the required chronological behavior.
+## Ordering
 
-Likely structure:
+The queue is FIFO and preserves insertion order exactly.
+
+A standard-library implementation such as:
 
 ```cpp
 std::queue<Event>
 ```
 
-or an equivalent container.
+is appropriate for the MVP unless implementation exposes a concrete reason to choose another container.
 
 ## Invariants
 
-- deterministic processing order;
-- no implicit parallel dispatch;
-- an event is processed at most once.
+- deterministic processing order
+- insertion order is preserved
+- no implicit parallel dispatch
+- an event is processed at most once
 
 ## Important Principle
 
-The queue orders **simulation reactions**, not market timestamps independently.
+`EventQueue` is a **dispatch queue**, not a market-time scheduler.
 
-If later event scheduling requires explicit future timestamps, the architecture
-may evolve.
+It must not reorder events according to timestamps.
 
-The MVP should not implement a generalized scheduler unless required.
+Future scheduling concerns such as timers, delayed actions, or explicitly future-dated events belong to a separate scheduler abstraction if one becomes necessary.
+
+## Live-Trading Direction
+
+The same queue semantics can remain valid in a future live system even if the underlying transport implementation changes.
+
+A later implementation may require a thread-safe queue, MPSC queue, ring buffer, or other low-latency transport, but such changes should be driven by concrete concurrency and performance requirements rather than introduced during the MVP.
 
 ---
 
@@ -662,65 +721,79 @@ The MVP should not implement a generalized scheduler unless required.
 
 Coordinate the simulation lifecycle.
 
-The engine is the system orchestrator.
+The engine is the system orchestrator and must not absorb domain logic owned by other components.
 
-## Dependencies
+## Phase 2 Boundary
 
-The engine conceptually depends on:
-
-- `HistoricalDataFeed`;
-- event queue;
-- `Strategy`;
-- `Portfolio`;
-- `ExecutionHandler`.
-
-Performance and reporting may run after or alongside portfolio-history
-generation depending on the final implementation.
-
-## Main Loop
-
-Conceptually:
+During Phase 2, the engine depends only on the infrastructure required to prove the deterministic event loop:
 
 ```text
-while market data remain or events remain:
-
-    expose next available market observation
-
-    enqueue MarketEvent
-
-    process pending events deterministically
-
-        MarketEvent
-            → Strategy
-            → optional SignalEvent
-
-        SignalEvent
-            → Portfolio / PositionSizer
-            → optional OrderEvent
-
-        OrderEvent
-            → ExecutionHandler
-            → pending execution state
-
-        future MarketEvent / next bar open
-            → ExecutionHandler
-            → FillEvent
-
-        FillEvent
-            → Portfolio
-
-    record portfolio valuation when required
+HistoricalDataFeed
+        ↓
+Bar
+        ↓
+MarketEvent
+        ↓
+EventQueue
+        ↓
+deterministic dispatch
 ```
 
-The exact ordering between:
+The Phase 2 engine may:
 
-- pending next-open fills;
-- publication of the newly completed bar;
-- portfolio valuation;
+- request the next available historical bar
+- create exactly one `MarketEvent` for that bar
+- enqueue the event
+- dequeue pending events
+- dispatch events deterministically
+- terminate once the feed is exhausted and the queue is empty
 
-must be finalized and tested before Phase 3 implementation.
+During Phase 2, it must not yet implement:
 
-This is one of the most important temporal design decisions in the engine.
+- strategy rules
+- position sizing
+- portfolio accounting
+- order generation
+- execution-price selection
+- simulated fills
+- performance calculations
+
+## Later Dependencies
+
+As later phases are implemented, the engine will coordinate:
+
+- `Strategy`
+- `Portfolio` / sizing logic
+- `ExecutionHandler`
+
+Those components remain separate owners of their domain behavior.
+
+## Full MVP Loop
+
+Conceptually, later phases extend the loop toward:
+
+```text
+MarketEvent
+    → Strategy
+    → optional SignalEvent
+
+SignalEvent
+    → Portfolio / PositionSizer
+    → optional OrderEvent
+
+OrderEvent
+    → ExecutionHandler
+    → pending execution state
+
+future market observation
+    → ExecutionHandler
+    → FillEvent
+
+FillEvent
+    → Portfolio
+```
+
+The exact ordering between pending next-open fills, publication of newly completed bars, and portfolio valuation remains a Phase 3 temporal-design decision.
 
 ---
 
@@ -730,19 +803,30 @@ The engine owns coordination.
 
 It may:
 
-- advance the market-data feed;
-- enqueue events;
-- dispatch events;
-- coordinate execution opportunities;
-- terminate the simulation.
+- advance the market-data feed
+- create market events from newly available bars
+- enqueue events
+- dispatch events
+- coordinate execution opportunities in later phases
+- terminate the simulation
 
-It should not:
+Phase 2 termination occurs when:
 
-- implement strategy rules;
-- calculate order quantity itself;
-- mutate portfolio accounting directly;
-- choose execution prices;
-- calculate performance formulas.
+```text
+HistoricalDataFeed is exhausted
+AND
+EventQueue is empty
+```
+
+The engine should not:
+
+- implement strategy rules
+- calculate order quantity itself
+- mutate portfolio accounting directly
+- choose execution prices
+- calculate performance formulas
+
+For every bar delivered by `HistoricalDataFeed`, the Phase 2 engine must create and process exactly one `MarketEvent`.
 
 ---
 
@@ -761,26 +845,25 @@ on_market(event / bar)
 
 The exact C++ interface may use:
 
-- a concrete strategy type;
-- a small runtime-polymorphic interface;
-- another minimal abstraction.
+- a concrete strategy type
+- a small runtime-polymorphic interface
+- another minimal abstraction
 
-The design should support the two MVP strategies without creating a framework
-for hypothetical strategies.
+The design should support the two MVP strategies without creating a framework for hypothetical strategies.
 
 ## Strategy-Owned State
 
 Examples:
 
-- entered/not-entered state for Buy-and-Hold;
-- moving-average rolling state;
-- previous regime/signal state.
+- entered/not-entered state for Buy-and-Hold
+- moving-average rolling state
+- previous regime/signal state
 
 ## Must Not Own
 
-- cash;
-- executed position quantity;
-- execution state.
+- cash
+- executed position quantity
+- execution state
 
 ---
 
@@ -788,8 +871,7 @@ Examples:
 
 ## Responsibility
 
-Generate the initial long intent required to establish the Buy-and-Hold
-position.
+Generate the initial long intent required to establish the Buy-and-Hold position.
 
 ## State
 
@@ -801,11 +883,9 @@ has_signaled_entry
 
 ## Invariant
 
-The strategy should not repeatedly generate unintended entry signals after its
-initial desired state is established.
+The strategy should not repeatedly generate unintended entry signals after its initial desired state is established.
 
-This strategy should be implemented first because it exercises the whole system
-with minimal strategy complexity.
+This strategy should be implemented first because it exercises the whole system with minimal strategy complexity.
 
 ---
 
@@ -813,29 +893,28 @@ with minimal strategy complexity.
 
 ## Responsibility
 
-Generate long/exit signals based on the relationship between short and long
-moving averages.
+Generate `Long` / `Flat` signals based on the relationship between short and long moving averages.
 
 ## Owned State
 
 Potentially:
 
-- short-window rolling data;
-- long-window rolling data;
-- current strategy regime;
-- warm-up state.
+- short-window rolling data
+- long-window rolling data
+- current strategy regime
+- warm-up state
 
 ## Configuration
 
-- short window;
-- long window.
+- short window
+- long window
 
 ## Invariants
 
-- no signal before required warm-up data are available;
-- short window must be valid relative to long window;
-- transitions are deterministic;
-- duplicate unintended signals are avoided.
+- no signal before required warm-up data are available
+- short window must be valid relative to long window
+- transitions are deterministic
+- duplicate unintended signals are avoided
 
 The exact crossover convention must be documented before implementation.
 
@@ -843,8 +922,7 @@ The exact crossover convention must be documented before implementation.
 
 # 21. Moving Average Utility
 
-A minimal reusable moving-average primitive may be introduced if it clearly
-simplifies strategy implementation.
+A minimal reusable moving-average primitive may be introduced if it clearly simplifies strategy implementation.
 
 ## Responsibility
 
@@ -878,19 +956,18 @@ current equity
 portfolio history
 ```
 
-Potential exact representation should remain simple because only one instrument
-exists.
+Potential exact representation should remain simple because only one instrument exists.
 
 ## Main Inputs
 
-- `SignalEvent` indirectly for order generation;
-- `FillEvent` for executed state changes;
-- observable market prices for valuation.
+- `SignalEvent` indirectly for order generation
+- `FillEvent` for executed state changes
+- observable market prices for valuation
 
 ## Main Outputs
 
-- `OrderEvent`;
-- portfolio snapshots/history.
+- `OrderEvent`
+- portfolio snapshots/history
 
 ---
 
@@ -898,27 +975,26 @@ exists.
 
 The portfolio should:
 
-- own cash;
-- own executed position quantity;
-- apply fills;
-- calculate current market value;
-- calculate current equity;
-- record portfolio snapshots;
-- provide the information needed for position sizing.
+- own cash
+- own executed position quantity
+- apply fills
+- calculate current market value
+- calculate current equity
+- record portfolio snapshots
+- provide the information needed for position sizing
 
 The portfolio should not:
 
-- acquire market data;
-- generate strategy signals;
-- choose execution price;
-- calculate final performance statistics.
+- acquire market data
+- generate strategy signals
+- choose execution price
+- calculate final performance statistics
 
 ---
 
 # 24. Position Representation
 
-Because the MVP contains only one instrument, the position representation can
-remain deliberately small.
+Because the MVP contains only one instrument, the position representation can remain deliberately small.
 
 Conceptually:
 
@@ -937,11 +1013,9 @@ quantity = 0  → flat
 quantity < 0  → short representation
 ```
 
-The MVP must prevent actual short behavior even though the representation is
-signed.
+The MVP must prevent actual short behavior even though the representation is signed.
 
-Do not build a generic multi-position container solely for future multi-asset
-support.
+Do not build a generic multi-position container solely for future multi-asset support.
 
 ---
 
@@ -967,8 +1041,8 @@ The MVP should use a deterministic policy.
 
 The position-sizing logic may initially be:
 
-- a small dedicated component; or
-- a clearly isolated policy used by `Portfolio`.
+- a small dedicated component or
+- a clearly isolated policy used by `Portfolio`
 
 A separate class is justified only if it improves clarity and testing.
 
@@ -980,8 +1054,7 @@ The important boundary is conceptual:
 
 # 26. Order Generation
 
-The portfolio/order-generation layer converts a target intent into a required
-trade.
+The portfolio/order-generation layer converts a target intent into a required trade.
 
 Examples:
 
@@ -1021,8 +1094,7 @@ These transitions must be deterministic and directly testable.
 
 Own simulated execution assumptions.
 
-The MVP execution handler receives market orders and produces fills according to
-the next-available-open rule.
+The MVP execution handler receives market orders and produces fills according to the next-available-open rule.
 
 ## Required Behavior
 
@@ -1042,16 +1114,15 @@ FillEvent
 
 The handler may need minimal pending-order state.
 
-Because the MVP supports only one instrument and simple market orders, this
-state should remain small.
+Because the MVP supports only one instrument and simple market orders, this state should remain small.
 
 ## Invariants
 
-- order cannot fill before submission;
-- order cannot use the same completed bar's open after observing its close;
-- valid pending market order fills at the next available open;
-- fill quantity equals order quantity;
-- execution is deterministic.
+- order cannot fill before submission
+- order cannot use the same completed bar's open after observing its close
+- valid pending market order fills at the next available open
+- fill quantity equals order quantity
+- execution is deterministic
 
 ---
 
@@ -1067,11 +1138,9 @@ no next bar exists
 
 The recommended MVP policy is:
 
-> The order remains unfilled and the backtest ends without synthesizing an
-> execution price.
+> The order remains unfilled and the backtest ends without synthesizing an execution price.
 
-This should be confirmed during implementation and covered by a deterministic
-test.
+This should be confirmed during implementation and covered by a deterministic test.
 
 Do not invent a final close fill unless the MVP scope is explicitly changed.
 
@@ -1081,8 +1150,7 @@ Do not invent a final close fill unless the MVP scope is explicitly changed.
 
 Portfolio valuation is distinct from execution.
 
-The portfolio must record equity using information that is valid at the
-simulated point in time.
+The portfolio must record equity using information that is valid at the simulated point in time.
 
 Conceptually:
 
@@ -1096,15 +1164,14 @@ equity
 
 The exact daily snapshot timing must be fixed during Phase 3.
 
-A recommended direction is to maintain one consistent end-of-step valuation
-convention after all events valid for that simulation step have been processed.
+A recommended direction is to maintain one consistent end-of-step valuation convention after all events valid for that simulation step have been processed.
 
 The convention must be:
 
-- explicit;
-- deterministic;
-- compatible with the next-open execution model;
-- used consistently by performance calculations.
+- explicit
+- deterministic
+- compatible with the next-open execution model
+- used consistently by performance calculations
 
 ---
 
@@ -1122,11 +1189,9 @@ market value
 equity
 ```
 
-Potential additional fields should be added only if required by outputs or
-validation.
+Potential additional fields should be added only if required by outputs or validation.
 
-Snapshots should represent observed portfolio state, not expose mutable
-portfolio internals.
+Snapshots should represent observed portfolio state, not expose mutable portfolio internals.
 
 ---
 
@@ -1144,11 +1209,11 @@ Calculate performance statistics from completed portfolio/equity history.
 
 MVP metrics:
 
-- total return;
-- annualized return;
-- annualized volatility;
-- Sharpe ratio;
-- maximum drawdown.
+- total return
+- annualized return
+- annualized volatility
+- Sharpe ratio
+- maximum drawdown
 
 ## Design Principle
 
@@ -1162,9 +1227,9 @@ Quantitative functions should be easy to test independently with known values.
 
 A dedicated return-series calculation may exist either as:
 
-- a helper function;
-- a performance utility;
-- a small value transformation.
+- a helper function
+- a performance utility
+- a small value transformation
 
 Do not create a large analytics hierarchy.
 
@@ -1174,11 +1239,9 @@ The exact return convention must be documented and tested.
 
 # 33. Benchmark
 
-The benchmark should reuse the same data assumptions and compatible performance
-conventions.
+The benchmark should reuse the same data assumptions and compatible performance conventions.
 
-Where possible, benchmark calculation should remain outside the event engine
-unless there is a concrete reason to run it as a separate strategy instance.
+Where possible, benchmark calculation should remain outside the event engine unless there is a concrete reason to run it as a separate strategy instance.
 
 The simplest correct comparison should be preferred.
 
@@ -1194,17 +1257,17 @@ Serialize and visualize completed backtest outputs.
 
 Likely:
 
-- write result CSV files;
-- write portfolio/equity history;
-- write performance summary.
+- write result CSV files
+- write portfolio/equity history
+- write performance summary
 
 ## Python Responsibilities
 
 Likely:
 
-- load exported results;
-- generate plots;
-- compare strategy and benchmark visually.
+- load exported results
+- generate plots
+- compare strategy and benchmark visually
 
 ## Must Not
 
@@ -1232,11 +1295,11 @@ export results
 
 Likely configuration fields include:
 
-- canonical dataset path;
-- strategy selection;
-- initial capital;
-- strategy parameters;
-- output directory.
+- canonical dataset path
+- strategy selection
+- initial capital
+- strategy parameters
+- output directory
 
 Do not build a generic configuration subsystem unless the MVP requires it.
 
@@ -1256,8 +1319,7 @@ BacktestEngine
 CLI / Application Wiring
 ```
 
-Performance and reporting depend on completed results but should not become
-dependencies of trading logic.
+Performance and reporting depend on completed results but should not become dependencies of trading logic.
 
 Provider-specific Python code is outside the C++ domain dependency graph.
 
@@ -1265,8 +1327,7 @@ Provider-specific Python code is outside the C++ domain dependency graph.
 
 # 37. Domain Types
 
-The project should introduce explicit domain types where they materially reduce
-ambiguity.
+The project should introduce explicit domain types where they materially reduce ambiguity.
 
 Possible examples:
 
@@ -1280,31 +1341,35 @@ Cash
 
 However, strong wrappers should be added selectively.
 
-Do not create extensive type machinery unless it improves correctness,
-readability, or unit safety.
+Do not create extensive type machinery unless it improves correctness, readability, or unit safety.
 
 ---
 
 # 38. Enumerations
 
-Likely explicit enums include:
+The event protocol uses scoped enums.
+
+The current direction is:
 
 ```text
-SignalType
-    LONG
-    EXIT
+SignalDirection
+    Long
+    Short
+    Flat
 
 OrderSide
-    BUY
-    SELL
+    Buy
+    Sell
 
 OrderType
-    MARKET
+    Market
 ```
 
 Use `enum class` rather than unscoped enums.
 
-Do not add post-MVP enum values solely for future completeness.
+`Short` is intentionally part of the durable signal protocol even though short-selling behavior is outside the current MVP.
+
+Additional order types or execution modes should not be added until their semantics are actually implemented.
 
 ---
 
@@ -1314,18 +1379,17 @@ Prefer simple ownership.
 
 General direction:
 
-- immutable/value-like events;
-- value-like domain objects;
-- components constructed by application wiring;
-- references or pointers used only when lifetime is obvious;
-- no global mutable state.
+- immutable/value-like events
+- value-like domain objects
+- `MarketEvent` owns its `Bar` by value
+- the queue owns pending `Event` values
+- components are constructed by application wiring
+- references or pointers are used only when lifetime is obvious
+- no global mutable state
 
-The `BacktestEngine` may own its major components or hold non-owning references
-to externally constructed components.
+The exact ownership relationship between `BacktestEngine` and its major components remains deferred until the engine interface is implemented.
 
-The final choice should optimize clarity and testability.
-
-Ownership must be obvious from the public API.
+Ownership must remain obvious from the public API.
 
 ---
 
@@ -1347,8 +1411,7 @@ output/reporting error
 
 For recoverable C++ operations, `std::expected` may be appropriate.
 
-Exceptions may still be appropriate where they make ownership and control flow
-clearer.
+Exceptions may still be appropriate where they make ownership and control flow clearer.
 
 The project should not force a single error mechanism everywhere.
 
@@ -1376,37 +1439,37 @@ Examples:
 
 ## Data
 
-- `Bar` validation where applicable;
-- CSV parsing;
-- timestamp parsing;
-- invalid-row behavior.
+- `Bar` validation where applicable
+- CSV parsing
+- timestamp parsing
+- invalid-row behavior
 
 ## Events
 
-- event construction;
-- event type dispatch.
+- event construction
+- event type dispatch
 
 ## Strategy
 
-- Buy-and-Hold signal behavior;
-- MA warm-up;
-- crossover transitions.
+- Buy-and-Hold signal behavior
+- MA warm-up
+- crossover transitions
 
 ## Portfolio
 
-- signal-to-order transitions;
-- fill accounting;
-- equity calculation.
+- signal-to-order transitions
+- fill accounting
+- equity calculation
 
 ## Execution
 
-- next-open fill timing;
-- final-bar unfilled order;
-- fill price and quantity.
+- next-open fill timing
+- final-bar unfilled order
+- fill price and quantity
 
 ## Performance
 
-- each metric against known values.
+- each metric against known values
 
 ---
 
@@ -1423,6 +1486,8 @@ CsvBarReader
 HistoricalDataFeed
 → BacktestEngine
 → MarketEvent
+→ EventQueue
+→ deterministic dispatch
 ```
 
 ```text
@@ -1448,7 +1513,9 @@ FillEvent
 → Portfolio
 ```
 
-The most important integration test is the complete manual-oracle backtest.
+Phase 2 must assert the exact event sequence produced from a deterministic historical fixture and verify that repeated runs produce the same sequence.
+
+The most important later integration test remains the complete manual-oracle backtest.
 
 ---
 
@@ -1470,8 +1537,7 @@ The exact file layout may change.
 
 The important principle is:
 
-> The oracle must remain small enough that every expected transition can be
-> independently verified.
+> The oracle must remain small enough that every expected transition can be independently verified.
 
 ---
 
@@ -1541,8 +1607,7 @@ event-driven-backtester/
 └── output/
 ```
 
-Later-phase directories should be created only when their components actually
-exist.
+Later-phase directories should be created only when their components actually exist.
 
 Do not create empty architecture merely to match a planned tree.
 
@@ -1622,8 +1687,7 @@ backtester_tests
 
 A single core library target is preferable to many small libraries for the MVP.
 
-Additional targets should be introduced only when there is a concrete build
-boundary.
+Additional targets should be introduced only when there is a concrete build boundary.
 
 ---
 
@@ -1633,19 +1697,18 @@ Keep dependencies minimal.
 
 Current required testing dependency:
 
-- Catch2 v3.
+- Catch2 v3
 
 The core engine should rely primarily on the C++ standard library.
 
 Avoid adding:
 
-- CSV frameworks;
-- date libraries;
-- logging frameworks;
-- CLI frameworks;
+- CSV frameworks
+- date libraries
+- logging frameworks
+- CLI frameworks
 
-unless implementation shows that the standard-library solution would materially
-reduce quality or waste significant development effort.
+unless implementation shows that the standard-library solution would materially reduce quality or waste significant development effort.
 
 ---
 
@@ -1659,15 +1722,13 @@ Python is intentionally outside the simulation core.
 
 Owns Yahoo Finance acquisition and acquisition metadata construction.
 
-It calls `yf.download()` with explicit MVP parameters and performs no
-normalization or file writing.
+It calls `yf.download()` with explicit MVP parameters and performs no normalization or file writing.
 
 ### `validation.py`
 
 Owns provider-boundary and canonical-data validation.
 
-It rejects invalid data and does not repair, sort, fill, interpolate, or
-fabricate observations.
+It rejects invalid data and does not repair, sort, fill, interpolate, or fabricate observations.
 
 ### `normalization.py`
 
@@ -1687,9 +1748,9 @@ It uses provider `Open`, `High`, `Low`, `Close`, and `Volume`.
 
 Owns serialization of:
 
-- raw provider CSV;
-- acquisition metadata JSON;
-- canonical CSV.
+- raw provider CSV
+- acquisition metadata JSON
+- canonical CSV
 
 Existing artifacts are not overwritten silently.
 
@@ -1721,8 +1782,7 @@ read backtest outputs
 
 ## Testing Boundary
 
-Python tests validate provider-specific acquisition, normalization, validation,
-persistence, and pipeline behavior.
+Python tests validate provider-specific acquisition, normalization, validation, persistence, and pipeline behavior.
 
 C++ tests validate the canonical-domain representation and simulation behavior.
 
@@ -1734,8 +1794,7 @@ C++ tests validate the canonical-domain representation and simulation behavior.
 data/raw/
 ```
 
-contains provider-originated data preserved for traceability together with
-acquisition metadata.
+contains provider-originated data preserved for traceability together with acquisition metadata.
 
 ```text
 data/canonical/
@@ -1760,7 +1819,7 @@ Deterministic fixtures required by the test suite should be committed.
 | State | Owner |
 |---|---|
 | historical dataset / cursor | `HistoricalDataFeed` |
-| pending events | event queue / engine |
+| pending events | `EventQueue` |
 | strategy-specific state | `Strategy` |
 | pending execution state | `ExecutionHandler` |
 | cash | `Portfolio` |
@@ -1800,65 +1859,112 @@ The following invariants should shape implementation and tests.
 
 ## Data
 
-- bars are valid;
-- bars are chronologically ordered;
-- future bars are inaccessible through normal simulation behavior.
+- bars are valid
+- bars are chronologically ordered
+- future bars are inaccessible through normal simulation behavior
 
 ## Events
 
-- each event has explicit meaning;
-- event processing is deterministic;
-- events are not processed more than once.
+- each event has explicit meaning
+- events are value-like domain messages
+- `MarketEvent` owns its `Bar` by value
+- event type is preserved through queueing and dispatch
+- `EventQueue` preserves FIFO insertion order
+- the queue does not independently reorder events by timestamp
+- event processing is deterministic
+- events are not processed more than once
+- each delivered historical bar produces exactly one `MarketEvent`
+- repeated runs over the same input produce the same event sequence
 
 ## Strategy
 
-- signals use only currently available information;
-- strategy does not mutate portfolio state.
+- signals use only currently available information
+- strategy does not mutate portfolio state
 
 ## Orders
 
-- an order exists before its fill;
-- quantity and side are explicit.
+- an order exists before its fill
+- quantity and side are explicit
 
 ## Execution
 
-- next-open rule is enforced;
-- same-bar look-ahead execution is impossible;
-- fill price is observable at the fill time.
+- next-open rule is enforced
+- same-bar look-ahead execution is impossible
+- fill price is observable at the fill time
 
 ## Portfolio
 
-- holdings change only after fills;
-- cash changes consistently with fills;
-- equity equals cash plus marked position value.
+- holdings change only after fills
+- cash changes consistently with fills
+- equity equals cash plus marked position value
 
 ## Performance
 
-- metrics are derived from completed portfolio history;
-- formula conventions are explicit;
-- deterministic known-result tests exist.
+- metrics are derived from completed portfolio history
+- formula conventions are explicit
+- deterministic known-result tests exist
 
 ---
 
-# 55. Architecture Decisions Deferred Until Implementation
+# 55. Post-MVP Event-Infrastructure Direction
+
+The current domain protocol should remain compatible with later live-trading infrastructure without requiring that infrastructure during the MVP.
+
+The expected long-term direction is:
+
+```text
+HistoricalDataFeed        LiveMarketDataAdapter
+        │                         │
+        └──────────┬──────────────┘
+                   ↓
+              MarketEvent
+                   ↓
+               EventQueue
+                   ↓
+                 Engine
+                   ↓
+               Strategy
+                   ↓
+              SignalEvent
+                   ↓
+        Portfolio / PositionSizer
+                   ↓
+              OrderEvent
+                   ↓
+        ┌──────────┴──────────┐
+        ↓                     ↓
+ExecutionHandler         Broker Adapter
+        ↓                     ↓
+        └──────────┬──────────┘
+                   ↓
+                FillEvent
+                   ↓
+                Portfolio
+```
+
+Potential future infrastructure includes:
+
+- `EventEnvelope` for transport metadata such as source, event time, receive time, sequence number, and correlation identifiers
+- a scheduler for future-timed events and timers
+- thread-safe or low-latency queue implementations when concurrency or measured performance requirements justify them
+
+These are non-MVP architectural directions, not current implementation requirements.
+
+---
+
+# 56. Architecture Decisions Deferred Until Implementation
+
 
 The following choices should **not** be frozen prematurely.
-
-## Event Payload Ownership
-
-Whether `MarketEvent` owns a `Bar`, contains a reference, or identifies current
-feed state.
-
-Choose when implementing Phase 2.
 
 ## Strategy Polymorphism
 
 Whether strategies use:
 
-- runtime polymorphism;
-- templates;
-- variants;
-- another minimal approach.
+- runtime polymorphism
+- templates
+- variants
+- another minimal approach
 
 Choose the simplest design needed by CLI/runtime strategy selection.
 
@@ -1886,42 +1992,47 @@ These are implementation decisions, not missing project planning.
 
 ---
 
-# 56. Architectural Decisions Already Fixed
+# 57. Architectural Decisions Already Fixed
 
-The following decisions are fixed for the MVP unless a correctness issue is
-found:
+The following decisions are fixed for the MVP unless a correctness issue is found:
 
-- C++23 core;
-- Python for acquisition/normalization/visualization;
-- one instrument;
-- daily OHLCV;
-- provider-independent canonical dataset;
-- canonical CSV schema:
-  `session_date,symbol,open,high,low,close,volume`;
-- `session_date` is an exchange-local daily session date represented as
-  `YYYY-MM-DD`, not an intraday timestamp;
-- canonical OHLC uses provider `Open`, `High`, `Low`, and `Close`;
-- `Adj Close` is not used as canonical close;
-- no manual second split adjustment or dividend adjustment is applied in
-  normalization;
-- canonical volume must be non-negative and integer-valued;
-- raw provider output is preserved separately from canonical data;
-- live/provider artifacts are not used as permanent deterministic fixtures;
-- event-driven sequential engine;
-- explicit signal/order/fill distinction;
-- long/flat trading behavior;
-- signed position representation;
-- market orders;
-- next-available-open execution;
-- deterministic full fills;
-- no concurrency;
-- strategy separated from execution;
-- portfolio separated from strategy;
-- performance separated from trading logic.
+- C++23 core
+- Python for acquisition/normalization/visualization
+- one instrument
+- daily OHLCV
+- provider-independent canonical dataset
+- canonical CSV schema: `session_date,symbol,open,high,low,close,volume`
+- `session_date` is an exchange-local daily session date represented as `YYYY-MM-DD`, not an intraday timestamp
+- canonical OHLC uses provider `Open`, `High`, `Low`, and `Close`
+- `Adj Close` is not used as canonical close
+- no manual second split adjustment or dividend adjustment is applied in normalization
+- canonical volume must be non-negative and integer-valued
+- raw provider output is preserved separately from canonical data
+- live/provider artifacts are not used as permanent deterministic fixtures
+- event-driven sequential engine
+- four explicit domain events: `MarketEvent`, `SignalEvent`, `OrderEvent`, and `FillEvent`
+- event values are represented as a closed `std::variant`
+- event dispatch uses type-safe visitation
+- `MarketEvent` owns its `Bar` by value
+- signal direction uses `Long`, `Short`, and `Flat` target-exposure semantics
+- `FillEvent` represents execution facts and includes fees
+- slippage is derived execution analysis rather than a fundamental fill field
+- `EventQueue` is deterministic FIFO dispatch infrastructure
+- scheduling and dispatch queueing are separate responsibilities
+- explicit signal/order/fill distinction
+- long/flat trading behavior for the MVP
+- signed position representation
+- market orders
+- next-available-open execution
+- deterministic full fills
+- no concurrency in the MVP
+- strategy separated from execution
+- portfolio separated from strategy
+- performance separated from trading logic
 
 ---
 
-# 57. Phase-to-Architecture Mapping
+# 58. Phase-to-Architecture Mapping
 
 ## Phase 1
 
@@ -1945,10 +2056,17 @@ CsvBarReader → HistoricalDataFeed integration
 Build:
 
 ```text
-Event types
-Event queue
+MarketEvent
+SignalEvent
+OrderEvent
+FillEvent
+Event = std::variant<...>
+EventQueue
 BacktestEngine
+HistoricalDataFeed → MarketEvent → EventQueue integration
 ```
+
+Phase 2 establishes the deterministic event protocol and market-only engine loop. Strategy, portfolio, and execution behavior remain Phase 3 work.
 
 ## Phase 3
 
@@ -1991,32 +2109,30 @@ This mapping is intentionally aligned with `development-guide.md`.
 
 ---
 
-# 58. Architecture Update Rule
+# 59. Architecture Update Rule
 
 Update this document when implementation changes a durable technical decision.
 
 Examples:
 
-- component ownership changes;
-- an interface changes materially;
-- event semantics change;
-- the temporal processing order changes;
-- a new invariant is introduced;
-- a deferred architectural choice is resolved.
+- component ownership changes
+- an interface changes materially
+- event semantics change
+- the temporal processing order changes
+- a new invariant is introduced
+- a deferred architectural choice is resolved
 
 Do not update it for trivial refactors.
 
 When code and this document disagree, resolve the discrepancy quickly.
 
-The architecture document should describe the system that actually exists, not
-an abandoned design.
+The architecture document should describe the system that actually exists, not an abandoned design.
 
 ---
 
-# 59. Phase 1 Implementation Outcome
+# 60. Phase 1 Implementation Outcome
 
-Phase 1 established and validated the complete historical-data boundary required
-by the simulation.
+Phase 1 established and validated the complete historical-data boundary required by the simulation.
 
 The implemented path is:
 
@@ -2046,24 +2162,20 @@ sequential Bar delivery
 
 The implementation was validated at multiple levels:
 
-- deterministic Python unit and pipeline tests;
-- deterministic C++ unit tests;
-- a C++ integration test for
-  `CsvBarReader → HistoricalDataFeed`;
-- a live Yahoo Finance smoke test;
-- a real producer-to-consumer smoke test where a Python-generated canonical CSV
-  was successfully consumed by the actual C++ `CsvBarReader`;
-- Debug and Release C++ test execution.
+- deterministic Python unit and pipeline tests
+- deterministic C++ unit tests
+- a C++ integration test for `CsvBarReader → HistoricalDataFeed`
+- a live Yahoo Finance smoke test
+- a real producer-to-consumer smoke test where a Python-generated canonical CSV was successfully consumed by the actual C++ `CsvBarReader`
+- Debug and Release C++ test execution
 
-No additional production glue component was required between `CsvBarReader` and
-`HistoricalDataFeed`.
+No additional production glue component was required between `CsvBarReader` and `HistoricalDataFeed`.
 
-Phase 2 can therefore build the event-driven engine on top of a trusted,
-provider-independent, sequential market-data foundation.
+Phase 2 can therefore build the event-driven engine on top of a trusted, provider-independent, sequential market-data foundation.
 
 ---
 
-# 60. Final Architectural Principle
+# 61. Final Architectural Principle
 
 The architecture should preserve the causal structure of the trading system:
 
@@ -2085,11 +2197,11 @@ Performance
 
 Each stage should have:
 
-- a clear responsibility;
-- explicit inputs and outputs;
-- obvious state ownership;
-- deterministic behavior;
-- testable invariants.
+- a clear responsibility
+- explicit inputs and outputs
+- obvious state ownership
+- deterministic behavior
+- testable invariants
 
 The architecture is successful if the MVP remains:
 
