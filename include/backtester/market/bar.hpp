@@ -6,9 +6,11 @@
 
 namespace backtester::market {
 
+using SessionDate = std::chrono::year_month_day;
+
 class Bar {
 public:
-    using SessionDate = std::chrono::year_month_day;
+    using SessionDate = market::SessionDate;
 
     Bar(
         SessionDate session_date,

@@ -16,6 +16,7 @@ add_executable(
     test_csv_bar_reader.cpp
     test_historical_data_feed.cpp
     test_csv_historical_data_feed.cpp
+    test_event.cpp
 )
 
 target_link_libraries(
