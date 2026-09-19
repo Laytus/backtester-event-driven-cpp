@@ -24,6 +24,7 @@ target_sources(
         src/data/csv_bar_reader.cpp
         src/data/historical_data_feed.cpp
         src/events/event.cpp
+        src/events/event_queue.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -34,6 +35,7 @@ target_sources(
             include/backtester/data/csv_bar_reader.hpp
             include/backtester/data/historical_data_feed.hpp
             include/backtester/events/event.hpp
+            include/backtester/events/event_queue.hpp
 )
 
 target_compile_features(

@@ -17,6 +17,7 @@ add_executable(
     test_historical_data_feed.cpp
     test_csv_historical_data_feed.cpp
     test_event.cpp
+    test_event_queue.cpp
 )
 
 target_link_libraries(
