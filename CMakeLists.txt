@@ -25,6 +25,7 @@ target_sources(
         src/data/historical_data_feed.cpp
         src/events/event.cpp
         src/events/event_queue.cpp
+        src/engine/backtest_engine.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -36,6 +37,7 @@ target_sources(
             include/backtester/data/historical_data_feed.hpp
             include/backtester/events/event.hpp
             include/backtester/events/event_queue.hpp
+            include/backtester/engine/backtest_engine.hpp
 )
 
 target_compile_features(
