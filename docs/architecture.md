@@ -91,11 +91,13 @@ CsvBarReader
         ↓
 HistoricalDataFeed
         ↓
+BacktestEngine
+        ↓
 MarketEvent
         ↓
 EventQueue
         ↓
-BacktestEngine
+deterministic engine dispatch
         ↓
 Strategy
         ↓
@@ -226,9 +228,15 @@ Represent one canonical daily OHLCV observation.
 
 ## Implemented Data Contract
 
+The market domain defines:
+
+```cpp
+using SessionDate = std::chrono::year_month_day;
+```
+
 `Bar` uses:
 
-- `SessionDate = std::chrono::year_month_day`
+- `market::SessionDate` session date
 - `std::string` symbol
 - `double` open
 - `double` high
@@ -678,26 +686,53 @@ Portfolio holdings and cash change only as a consequence of fill processing.
 
 Store domain events that have been produced but not yet processed.
 
-`EventQueue` defines deterministic dispatch order.
+`EventQueue` defines deterministic FIFO dispatch order.
 
-## Ordering
+## Implemented Interface
 
-The queue is FIFO and preserves insertion order exactly.
+The queue exposes:
 
-A standard-library implementation such as:
+```cpp
+void push(Event event);
+
+[[nodiscard]]
+std::optional<Event> pop();
+
+[[nodiscard]]
+bool empty() const noexcept;
+```
+
+Its implemented storage is:
 
 ```cpp
 std::queue<Event>
 ```
 
-is appropriate for the MVP unless implementation exposes a concrete reason to choose another container.
+The queue owns pending `Event` values.
+
+Copy construction and copy assignment are disabled so one pending event stream cannot be duplicated accidentally.
+
+Move construction and move assignment are allowed so ownership of the pending stream can be transferred.
+
+## Ordering
+
+The queue is FIFO and preserves insertion order exactly.
+
+An empty `pop()` returns:
+
+```cpp
+std::nullopt
+```
+
+Empty-queue behavior is expected control flow rather than an exception.
 
 ## Invariants
 
-- deterministic processing order
+- deterministic FIFO retrieval
 - insertion order is preserved
 - no implicit parallel dispatch
-- an event is processed at most once
+- each queued event can be removed at most once
+- empty state is explicit and deterministic
 
 ## Important Principle
 
@@ -723,32 +758,75 @@ Coordinate the simulation lifecycle.
 
 The engine is the system orchestrator and must not absorb domain logic owned by other components.
 
+## Implemented Phase 2 Interface
+
+The current engine exposes:
+
+```cpp
+explicit BacktestEngine(
+    data::HistoricalDataFeed data_feed
+);
+
+[[nodiscard]]
+std::optional<events::Event> step();
+
+[[nodiscard]]
+bool finished() const noexcept;
+```
+
+The engine is non-copyable and movable.
+
+## Ownership
+
+`BacktestEngine` owns by value:
+
+- one `HistoricalDataFeed`
+- one `EventQueue`
+
+It also owns the minimal orchestration state required to remember whether feed exhaustion has been observed.
+
+This ownership keeps mutable simulation state local to one engine instance and prevents accidental duplication through copying.
+
 ## Phase 2 Boundary
 
-During Phase 2, the engine depends only on the infrastructure required to prove the deterministic event loop:
+The implemented Phase 2 path is:
 
 ```text
 HistoricalDataFeed
         ↓
-Bar
+       Bar
         ↓
-MarketEvent
+BacktestEngine
         ↓
-EventQueue
+   MarketEvent
         ↓
-deterministic dispatch
+   EventQueue
+        ↓
+BacktestEngine::step()
+        ↓
+observable Event
 ```
 
-The Phase 2 engine may:
+For Phase 2, `step()` is the incremental observable event boundary.
 
-- request the next available historical bar
-- create exactly one `MarketEvent` for that bar
-- enqueue the event
-- dequeue pending events
-- dispatch events deterministically
-- terminate once the feed is exhausted and the queue is empty
+Each successful call removes at most one pending `Event` from `EventQueue` and returns it to the caller.
 
-During Phase 2, it must not yet implement:
+The Phase 2 engine:
+
+- processes pending queued work before requesting another historical bar
+- requests historical bars sequentially
+- creates exactly one `MarketEvent` for every delivered `Bar`
+- enqueues generated events
+- removes pending events in deterministic FIFO order
+- exposes one event per successful `step()`
+- records feed exhaustion only after `HistoricalDataFeed::next()` returns `std::nullopt`
+- reports completion only when feed exhaustion has been observed and the queue is empty
+
+Concrete dispatch to `Strategy`, `Portfolio`, or `ExecutionHandler` is deferred until those components exist.
+
+Type-specific event dispatch uses the closed `Event` variant and type-safe visitation where concrete handlers require it.
+
+During Phase 2, the engine must not implement:
 
 - strategy rules
 - position sizing
@@ -767,6 +845,8 @@ As later phases are implemented, the engine will coordinate:
 - `ExecutionHandler`
 
 Those components remain separate owners of their domain behavior.
+
+A full internal `run()` loop may be introduced when concrete event handlers exist.
 
 ## Full MVP Loop
 
@@ -806,8 +886,8 @@ It may:
 - advance the market-data feed
 - create market events from newly available bars
 - enqueue events
-- dispatch events
-- coordinate execution opportunities in later phases
+- expose pending events through the current incremental dispatch boundary
+- coordinate concrete event handlers and execution opportunities in later phases
 - terminate the simulation
 
 Phase 2 termination occurs when:
@@ -826,7 +906,7 @@ The engine should not:
 - choose execution prices
 - calculate performance formulas
 
-For every bar delivered by `HistoricalDataFeed`, the Phase 2 engine must create and process exactly one `MarketEvent`.
+For every bar delivered by `HistoricalDataFeed`, the Phase 2 engine must create and expose exactly one `MarketEvent` through `step()`.
 
 ---
 
@@ -1060,27 +1140,27 @@ Examples:
 
 ```text
 currently flat
-+ LONG signal
-→ BUY order
++ Long signal
+→ Buy order
 ```
 
 ```text
 currently long
-+ EXIT signal
-→ SELL order for held quantity
++ Flat signal
+→ Sell order for held quantity
 ```
 
 Examples of no-op transitions:
 
 ```text
 currently long
-+ LONG signal
++ Long signal
 → no order
 ```
 
 ```text
 currently flat
-+ EXIT signal
++ Flat signal
 → no order
 ```
 
@@ -1382,14 +1462,14 @@ General direction:
 - immutable/value-like events
 - value-like domain objects
 - `MarketEvent` owns its `Bar` by value
-- the queue owns pending `Event` values
+- `EventQueue` owns pending `Event` values
+- `BacktestEngine` owns its `HistoricalDataFeed` and `EventQueue` by value
+- the engine is non-copyable and movable
 - components are constructed by application wiring
 - references or pointers are used only when lifetime is obvious
 - no global mutable state
 
-The exact ownership relationship between `BacktestEngine` and its major components remains deferred until the engine interface is implemented.
-
-Ownership must remain obvious from the public API.
+Ownership remains obvious from the public API.
 
 ---
 
@@ -1483,11 +1563,14 @@ CsvBarReader
 ```
 
 ```text
-HistoricalDataFeed
+canonical CSV
+→ CsvBarReader
+→ HistoricalDataFeed
 → BacktestEngine
 → MarketEvent
 → EventQueue
-→ deterministic dispatch
+→ BacktestEngine::step()
+→ deterministic observable Event sequence
 ```
 
 ```text
@@ -1545,7 +1628,7 @@ The important principle is:
 
 The repository grows only when real components are implemented.
 
-After Phase 1, the relevant implemented structure is conceptually:
+After Phase 2, the relevant implemented structure is conceptually:
 
 ```text
 event-driven-backtester/
@@ -1564,16 +1647,28 @@ event-driven-backtester/
 │
 ├── include/
 │   └── backtester/
-│       └── data/
-│           ├── bar.hpp
-│           ├── csv_bar_reader.hpp
-│           └── historical_data_feed.hpp
+│       ├── market/
+│       │   └── bar.hpp
+│       ├── data/
+│       │   ├── csv_bar_reader.hpp
+│       │   └── historical_data_feed.hpp
+│       ├── events/
+│       │   ├── event.hpp
+│       │   └── event_queue.hpp
+│       └── engine/
+│           └── backtest_engine.hpp
 │
 ├── src/
-│   └── data/
-│       ├── bar.cpp
-│       ├── csv_bar_reader.cpp
-│       └── historical_data_feed.cpp
+│   ├── market/
+│   │   └── bar.cpp
+│   ├── data/
+│   │   ├── csv_bar_reader.cpp
+│   │   └── historical_data_feed.cpp
+│   ├── events/
+│   │   ├── event.cpp
+│   │   └── event_queue.cpp
+│   └── engine/
+│       └── backtest_engine.cpp
 │
 ├── python/
 │   └── backtester_data/
@@ -1591,7 +1686,11 @@ event-driven-backtester/
 │   │   ├── test_bar.cpp
 │   │   ├── test_csv_bar_reader.cpp
 │   │   ├── test_historical_data_feed.cpp
-│   │   └── test_csv_historical_data_feed.cpp
+│   │   ├── test_csv_historical_data_feed.cpp
+│   │   ├── test_event.cpp
+│   │   ├── test_event_queue.cpp
+│   │   ├── test_backtest_engine.cpp
+│   │   └── test_phase_2_integration.cpp
 │   └── python/
 │       ├── test_acquisition.py
 │       ├── test_validation.py
@@ -1619,15 +1718,23 @@ Do not create one class merely to match every directory.
 
 Create files only when a real component exists.
 
-Potential early files may include:
+Implemented through Phase 2:
 
 ```text
-include/backtester/data/bar.hpp
+include/backtester/market/bar.hpp
+
 include/backtester/data/csv_bar_reader.hpp
 include/backtester/data/historical_data_feed.hpp
 
 include/backtester/events/event.hpp
+include/backtester/events/event_queue.hpp
 
+include/backtester/engine/backtest_engine.hpp
+```
+
+Potential later files may include:
+
+```text
 include/backtester/strategy/strategy.hpp
 include/backtester/strategy/buy_and_hold.hpp
 include/backtester/strategy/moving_average_crossover.hpp
@@ -1637,11 +1744,9 @@ include/backtester/portfolio/portfolio.hpp
 include/backtester/execution/execution_handler.hpp
 
 include/backtester/performance/performance.hpp
-
-include/backtester/engine/backtest_engine.hpp
 ```
 
-Exact names may change during implementation.
+Exact later names may change during implementation.
 
 Avoid premature file proliferation.
 
@@ -1659,15 +1764,27 @@ namespace backtester {
 }
 ```
 
-Nested namespaces may mirror meaningful domains:
+Nested namespaces mirror meaningful domains.
+
+Currently implemented:
 
 ```cpp
+backtester::market
 backtester::data
-backtester::strategy
-backtester::execution
+backtester::events
+backtester::engine
 ```
 
-Only introduce them if they improve clarity.
+Later domains may include:
+
+```cpp
+backtester::strategy
+backtester::portfolio
+backtester::execution
+backtester::performance
+```
+
+Only introduce them when they improve clarity.
 
 Do not create deep namespace hierarchies.
 
@@ -1820,6 +1937,7 @@ Deterministic fixtures required by the test suite should be committed.
 |---|---|
 | historical dataset / cursor | `HistoricalDataFeed` |
 | pending events | `EventQueue` |
+| feed-exhaustion / orchestration state | `BacktestEngine` |
 | strategy-specific state | `Strategy` |
 | pending execution state | `ExecutionHandler` |
 | cash | `Portfolio` |
@@ -1872,7 +1990,8 @@ The following invariants should shape implementation and tests.
 - `EventQueue` preserves FIFO insertion order
 - the queue does not independently reorder events by timestamp
 - event processing is deterministic
-- events are not processed more than once
+- each queued event can be removed at most once
+- each event exposed by the current Phase 2 engine boundary is returned once
 - each delivered historical bar produces exactly one `MarketEvent`
 - repeated runs over the same input produce the same event sequence
 
@@ -1968,12 +2087,6 @@ Whether strategies use:
 
 Choose the simplest design needed by CLI/runtime strategy selection.
 
-## Engine Component Ownership
-
-Whether the engine owns components directly or receives references.
-
-Choose based on testability and lifetime clarity.
-
 ## PositionSizer Shape
 
 Separate component versus isolated portfolio policy.
@@ -2019,6 +2132,10 @@ The following decisions are fixed for the MVP unless a correctness issue is foun
 - slippage is derived execution analysis rather than a fundamental fill field
 - `EventQueue` is deterministic FIFO dispatch infrastructure
 - scheduling and dispatch queueing are separate responsibilities
+- `BacktestEngine` owns `HistoricalDataFeed` and `EventQueue` by value
+- `BacktestEngine` is non-copyable and movable
+- `BacktestEngine::step()` is the Phase 2 incremental observable event boundary
+- engine completion requires observed feed exhaustion and an empty `EventQueue`
 - explicit signal/order/fill distinction
 - long/flat trading behavior for the MVP
 - signed position representation
@@ -2053,7 +2170,7 @@ CsvBarReader → HistoricalDataFeed integration
 
 ## Phase 2
 
-Build:
+Implemented:
 
 ```text
 MarketEvent
@@ -2063,7 +2180,9 @@ FillEvent
 Event = std::variant<...>
 EventQueue
 BacktestEngine
-HistoricalDataFeed → MarketEvent → EventQueue integration
+incremental step() boundary
+canonical CSV → CsvBarReader → HistoricalDataFeed → BacktestEngine integration
+deterministic repeated-run validation
 ```
 
 Phase 2 establishes the deterministic event protocol and market-only engine loop. Strategy, portfolio, and execution behavior remain Phase 3 work.
@@ -2171,11 +2290,62 @@ The implementation was validated at multiple levels:
 
 No additional production glue component was required between `CsvBarReader` and `HistoricalDataFeed`.
 
-Phase 2 can therefore build the event-driven engine on top of a trusted, provider-independent, sequential market-data foundation.
+This trusted data foundation now underpins the implemented Phase 2 event-driven engine.
 
 ---
 
-# 61. Final Architectural Principle
+# 61. Phase 2 Implementation Outcome
+
+Phase 2 established and validated the deterministic event-driven engine foundation.
+
+The implemented path is:
+
+```text
+canonical CSV
+        ↓
+CsvBarReader
+        ↓
+HistoricalDataFeed
+        ↓
+BacktestEngine
+        ↓
+MarketEvent
+        ↓
+EventQueue
+        ↓
+BacktestEngine::step()
+        ↓
+observable Event
+```
+
+The implementation was validated at multiple levels:
+
+- explicit construction and invariant tests for all four domain event types
+- `Event` alternative preservation and type-safe visitation tests
+- deterministic FIFO `EventQueue` tests
+- copy/move contract checks for state-owning queue and engine types
+- `BacktestEngine` tests for sequential market-data access, event production, exhaustion, and stable completion
+- a canonical CSV → engine integration test using real production components
+- repeated-run validation proving identical observable output for identical canonical input
+- Debug and Release C++ test execution
+
+The completed Phase 2 architecture provides:
+
+- four explicit domain event types
+- a closed `std::variant` event representation
+- value-based event ownership
+- deterministic FIFO event transport
+- exactly one `MarketEvent` per delivered `Bar`
+- queue-first engine progression
+- no arbitrary future-data access through the simulation path
+- explicit observed feed exhaustion
+- deterministic engine completion
+
+Strategy, Portfolio, order-generation behavior, and execution remain intentionally outside Phase 2.
+
+---
+
+# 62. Final Architectural Principle
 
 The architecture should preserve the causal structure of the trading system:
 

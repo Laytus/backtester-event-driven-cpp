@@ -590,12 +590,14 @@ Concurrency is not required.
 
 The engine coordinates:
 
-- requesting the next available market observation;
-- creating or receiving `MarketEvent`s;
-- processing queued events;
-- dispatching them to the appropriate component.
+- requesting the next available market observation
+- creating or receiving `MarketEvent`s
+- processing queued events deterministically
+- exposing one pending event through the incremental engine boundary
 
-At this phase, downstream trading behavior may still be minimal or stubbed where necessary.
+Concrete downstream dispatch begins when the corresponding Strategy, Portfolio, and Execution components are implemented.
+
+At this phase, downstream trading behavior remains outside the engine.
 
 ---
 
@@ -617,14 +619,16 @@ Test:
 
 ## Phase Integration Test
 
-Using a small historical fixture:
+Using a small deterministic canonical fixture:
 
 ```text
-HistoricalDataFeed
-→ MarketEvent
-→ Event Queue
+canonical CSV
+→ CsvBarReader
+→ HistoricalDataFeed
 → BacktestEngine
-→ deterministic observed event sequence
+→ MarketEvent
+→ EventQueue
+→ deterministic observable event sequence
 ```
 
 The exact expected event sequence must be asserted.
@@ -716,12 +720,14 @@ Do not introduce the moving-average strategy yet.
 
 ### 3. Define Signal Semantics
 
-The MVP requires at least:
+The MVP trading behavior requires:
 
-- `LONG`;
-- `EXIT`.
+- `Long`
+- `Flat`
 
-Signals express intent only.
+`Short` remains part of the durable signal protocol, but short-selling behavior is outside the MVP.
+
+Signals express target exposure only.
 
 They must not contain hidden execution behavior.
 
