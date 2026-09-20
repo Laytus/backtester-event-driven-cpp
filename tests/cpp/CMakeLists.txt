@@ -19,6 +19,7 @@ add_executable(
     test_event.cpp
     test_event_queue.cpp
     test_backtest_engine.cpp
+    test_phase_2_integration.cpp
 )
 
 target_link_libraries(
