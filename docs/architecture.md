@@ -1637,13 +1637,15 @@ event-driven-backtester/
 ├── pyproject.toml
 │
 ├── docs/
-│   ├── MVP-scope.md
-│   ├── project-principles.md
-│   ├── references.md
+│   ├── architecture.md
+│   ├── data-architecture.md
 │   ├── development-guide.md
 │   ├── knowledge-guide.md
-│   ├── architecture.md
-│   └── practical_cpp_notes.md
+│   ├── mvp-bar-contract.md
+│   ├── MVP-scope.md
+│   ├── post-mvp-architecture.md
+│   ├── project-principles.md
+│   └── references.md
 │
 ├── include/
 │   └── backtester/

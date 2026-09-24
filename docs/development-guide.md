@@ -275,6 +275,8 @@ A phase may contain multiple small implementation tasks and commits.
 
 # 6. Phase 0 — Project Foundation
 
+> **Status:** Complete
+
 ## Purpose
 
 Freeze the minimum project definition required to begin implementation without ambiguity.
@@ -346,6 +348,8 @@ Once these conditions are satisfied, return to Phase 0 only if implementation ex
 ---
 
 # 7. Phase 1 — Market Data Infrastructure
+
+> **Status:** Complete
 
 ## Purpose
 
@@ -517,6 +521,8 @@ Phase 1 is complete when:
 ---
 
 # 8. Phase 2 — Event-Driven Engine
+
+> **Status:** Complete
 
 ## Purpose
 

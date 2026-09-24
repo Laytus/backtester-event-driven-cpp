@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.28)
 project(
     backtester_event_driven_cpp
     VERSION 0.1.0
-    DESCRIPTION "A learning-focused event-driven backtester"
+    DESCRIPTION "A deterministic event-driven backtesting engine in modern C++"
     LANGUAGES CXX
 )
 
