@@ -27,6 +27,7 @@ target_sources(
         src/events/event_queue.cpp
         src/engine/backtest_engine.cpp
         src/strategy/buy_and_hold_strategy.cpp
+        src/portfolio/portfolio.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -41,6 +42,7 @@ target_sources(
             include/backtester/engine/backtest_engine.hpp
             include/backtester/strategy/strategy.hpp
             include/backtester/strategy/buy_and_hold_strategy.hpp
+            include/backtester/portfolio/portfolio.hpp
 )
 
 target_compile_features(

@@ -21,6 +21,7 @@ add_executable(
     test_backtest_engine.cpp
     test_phase_2_integration.cpp
     test_buy_and_hold_strategy.cpp
+    test_portfolio.cpp
 )
 
 target_link_libraries(
