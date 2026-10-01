@@ -28,6 +28,8 @@ target_sources(
         src/engine/backtest_engine.cpp
         src/strategy/buy_and_hold_strategy.cpp
         src/portfolio/portfolio.cpp
+        src/portfolio/position_sizer.cpp
+        src/portfolio/order_generator.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -43,6 +45,8 @@ target_sources(
             include/backtester/strategy/strategy.hpp
             include/backtester/strategy/buy_and_hold_strategy.hpp
             include/backtester/portfolio/portfolio.hpp
+            include/backtester/portfolio/position_sizer.hpp
+            include/backtester/portfolio/order_generator.hpp
 )
 
 target_compile_features(
