@@ -30,6 +30,7 @@ target_sources(
         src/portfolio/portfolio.cpp
         src/portfolio/position_sizer.cpp
         src/portfolio/order_generator.cpp
+        src/execution/execution_handler.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -47,6 +48,7 @@ target_sources(
             include/backtester/portfolio/portfolio.hpp
             include/backtester/portfolio/position_sizer.hpp
             include/backtester/portfolio/order_generator.hpp
+            include/backtester/execution/execution_handler.hpp
 )
 
 target_compile_features(

@@ -23,6 +23,7 @@ add_executable(
     test_buy_and_hold_strategy.cpp
     test_portfolio.cpp
     test_position_sizing.cpp
+    test_execution_handler.cpp
 )
 
 target_link_libraries(
