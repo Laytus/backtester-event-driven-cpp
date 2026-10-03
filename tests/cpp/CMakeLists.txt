@@ -24,6 +24,7 @@ add_executable(
     test_portfolio.cpp
     test_position_sizing.cpp
     test_execution_handler.cpp
+    test_phase_3_engine_integration.cpp
 )
 
 target_link_libraries(

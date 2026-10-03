@@ -1,8 +1,16 @@
+#include "backtester/data/historical_data_feed.hpp"
 #include "backtester/engine/backtest_engine.hpp"
+#include "backtester/events/event.hpp"
+#include "backtester/market/bar.hpp"
+#include "backtester/portfolio/portfolio.hpp"
+#include "backtester/portfolio/position_sizer.hpp"
+#include "backtester/strategy/strategy.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <memory>
+#include <optional>
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -13,8 +21,21 @@ using backtester::data::HistoricalDataFeed;
 using backtester::engine::BacktestEngine;
 using backtester::events::Event;
 using backtester::events::MarketEvent;
+using backtester::events::SignalEvent;
 using backtester::market::Bar;
 using backtester::market::SessionDate;
+using backtester::portfolio::Portfolio;
+using backtester::portfolio::PositionSizer;
+using backtester::strategy::Strategy;
+
+class SilentStrategy final : public Strategy {
+public:
+    [[nodiscard]]
+    std::vector<SignalEvent>
+    on_market(const MarketEvent&) override {
+        return {};
+    }
+};
 
 const SessionDate first_date{
     std::chrono::year{2026},
@@ -74,6 +95,14 @@ BacktestEngine make_engine() {
     return BacktestEngine{
         HistoricalDataFeed{
             make_bars()
+        },
+        std::make_unique<SilentStrategy>(),
+        Portfolio{
+            "AAPL",
+            10'000.0
+        },
+        PositionSizer{
+            1.0
         }
     };
 }
@@ -105,6 +134,14 @@ TEST_CASE("BacktestEngine handles an empty historical feed") {
     BacktestEngine engine{
         HistoricalDataFeed{
             std::vector<Bar>{}
+        },
+        std::make_unique<SilentStrategy>(),
+        Portfolio{
+            "AAPL",
+            10'000.0
+        },
+        PositionSizer{
+            1.0
         }
     };
 

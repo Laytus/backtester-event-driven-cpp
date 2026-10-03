@@ -2,11 +2,16 @@
 #include "backtester/data/historical_data_feed.hpp"
 #include "backtester/engine/backtest_engine.hpp"
 #include "backtester/events/event.hpp"
+#include "backtester/portfolio/portfolio.hpp"
+#include "backtester/portfolio/position_sizer.hpp"
+#include "backtester/strategy/strategy.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <memory>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -17,7 +22,20 @@ using backtester::data::HistoricalDataFeed;
 using backtester::engine::BacktestEngine;
 using backtester::events::Event;
 using backtester::events::MarketEvent;
+using backtester::events::SignalEvent;
 using backtester::market::Bar;
+using backtester::portfolio::Portfolio;
+using backtester::portfolio::PositionSizer;
+using backtester::strategy::Strategy;
+
+class SilentStrategy final : public Strategy {
+public:
+    [[nodiscard]]
+    std::vector<SignalEvent>
+    on_market(const MarketEvent&) override {
+        return {};
+    }
+};
 
 std::filesystem::path fixture_path(
     const std::string& filename
@@ -50,14 +68,33 @@ void require_same_bar(
     REQUIRE(actual.volume() == expected.volume());
 }
 
+BacktestEngine make_engine(
+    const std::vector<Bar>& bars
+) {
+    const std::string portfolio_symbol =
+        bars.empty()
+        ? std::string{"AAPL"}
+        : bars.front().symbol();
+
+    return BacktestEngine{
+        HistoricalDataFeed{
+            bars
+        },
+        std::make_unique<SilentStrategy>(),
+        Portfolio{
+            portfolio_symbol,
+            10'000.0
+        },
+        PositionSizer{
+            1.0
+        }
+    };
+}
+
 std::vector<Bar> run_engine(
     const std::vector<Bar>& bars
 ) {
-    BacktestEngine engine{
-        HistoricalDataFeed{
-            bars
-        }
-    };
+    auto engine = make_engine(bars);
 
     std::vector<Bar> observed_bars;
 
@@ -87,11 +124,7 @@ TEST_CASE(
 
     REQUIRE_FALSE(expected_bars.empty());
 
-    BacktestEngine engine{
-        HistoricalDataFeed{
-            expected_bars
-        }
-    };
+    auto engine = make_engine(expected_bars);
 
     for (const auto& expected_bar : expected_bars) {
         REQUIRE_FALSE(engine.finished());
