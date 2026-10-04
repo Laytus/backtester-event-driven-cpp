@@ -82,7 +82,9 @@ The durable boundary between the two environments is the canonical CSV contract.
 
 # 3. High-Level Architecture
 
-The MVP system is organized around the following flow:
+The implemented system through Phase 3 is organized around a deterministic daily-session lifecycle.
+
+The data path is:
 
 ```text
 Canonical Dataset
@@ -92,37 +94,59 @@ CsvBarReader
 HistoricalDataFeed
         ↓
 BacktestEngine
+```
+
+Inside `BacktestEngine`, one active historical session is processed causally as:
+
+```text
+previous pending OrderEvent
         ↓
-MarketEvent
-        ↓
-EventQueue
-        ↓
-deterministic engine dispatch
-        ↓
-Strategy
-        ↓
-SignalEvent
-        ↓
-Portfolio / PositionSizer
-        ↓
-OrderEvent
+current session Open
         ↓
 ExecutionHandler
         ↓
-FillEvent
+optional FillEvent
         ↓
-Portfolio
+Portfolio.apply_fill()
+
+completed Bar
         ↓
-Portfolio Snapshot / Equity History
+MarketEvent
+        ↓
+Strategy
+        ↓
+optional SignalEvent
+        ↓
+PositionSizer
+        ↓
+target position
+        ↓
+OrderGenerator
+        ↓
+optional OrderEvent
+        ↓
+ExecutionHandler pending state
+
+current session Close
+        ↓
+Portfolio.mark_to_market()
+        ↓
+PortfolioSnapshot
+```
+
+Later phases consume completed portfolio history through:
+
+```text
+Portfolio snapshots / equity history
         ↓
 Performance
         ↓
 Reporting
 ```
 
-The `BacktestEngine` coordinates the flow.
+`BacktestEngine` coordinates the temporal flow.
 
-It must not absorb the responsibilities of the domain components.
+It must not absorb the domain responsibilities of Strategy, Portfolio, sizing, order generation, execution, performance, or reporting.
 
 ---
 
@@ -469,18 +493,17 @@ For the MVP, that observation is one completed daily `Bar`.
 
 During backtesting:
 
-- `BacktestEngine`, using the next `Bar` delivered by `HistoricalDataFeed`.
+- `BacktestEngine`, using the next `Bar` delivered by `HistoricalDataFeed`
 
 A future live implementation may produce equivalent market events from a live market-data adapter.
 
 ## Consumer
 
-During Phase 2, the event is consumed by the engine's deterministic dispatch path.
-
-Later consumers may include:
+During the implemented Phase 3 lifecycle:
 
 - `Strategy`
-- portfolio valuation logic where appropriate
+
+Portfolio valuation does not consume `MarketEvent` directly. The engine uses the active session close to invoke Portfolio mark-to-market after the complete event chain for that session has finished.
 
 ## Payload and Ownership
 
@@ -512,9 +535,21 @@ A signal represents trading intent, not an execution instruction.
 
 ## Consumer
 
-- portfolio / position-sizing / order-generation logic.
+During the implemented Phase 3 lifecycle:
 
-The exact Phase 3 boundary remains to be implemented.
+```text
+SignalEvent
+        ↓
+PositionSizer
+        ↓
+target position
+        ↓
+OrderGenerator
+        ↓
+optional OrderEvent
+```
+
+The Portfolio is inspected read-only by sizing logic but is not mutated by a signal.
 
 ## Direction Semantics
 
@@ -538,7 +573,7 @@ enum class SignalDirection {
 
 `Short` is part of the durable event protocol even though short-selling behavior remains outside the current MVP.
 
-No explicit `Hold` signal is required. The absence of a new `SignalEvent` can represent no change in desired exposure.
+No explicit `Hold` signal is required. The absence of a new `SignalEvent` represents no change in desired exposure.
 
 ## Payload
 
@@ -556,7 +591,7 @@ signal_date
 
 - execution price
 - fill price
-- hidden portfolio mutation
+- hidden Portfolio mutation
 - assumed trade result
 
 ---
@@ -565,13 +600,17 @@ signal_date
 
 ## Meaning
 
-A concrete trading instruction has been created from strategy intent and portfolio/order-generation logic.
+A concrete trading instruction has been created from strategy intent, target sizing, and current executed Portfolio state.
 
 An order represents an instruction to attempt execution. It does not imply that execution has already occurred.
 
 ## Producer
 
-- portfolio / position-sizing / order-generation layer
+- `OrderGenerator`
+
+`PositionSizer` determines the target position.
+
+`OrderGenerator` compares that target with the current executed position and produces the required transition order, if any.
 
 ## Consumer
 
@@ -610,14 +649,17 @@ Additional order types should be added only when corresponding execution semanti
 
 ## Temporal Meaning
 
-`submission_date` identifies the session after whose observable information the
-order was created.
+`submission_date` identifies the session after whose observable information the order was created.
 
-## Invariant
+A market order created from completed session `t` is not eligible for execution at `Open(t)`.
 
-Quantity must satisfy the order contract.
+## Invariants
 
-Creating an `OrderEvent` does not modify executed portfolio holdings.
+- quantity is a positive unsigned magnitude
+- side is explicit
+- order type is `Market` in the MVP
+- creating an `OrderEvent` does not modify executed Portfolio holdings
+- the order may remain pending across the boundary between two sessions
 
 ---
 
@@ -754,126 +796,206 @@ A later implementation may require a thread-safe queue, MPSC queue, ring buffer,
 
 ## Responsibility
 
-Coordinate the simulation lifecycle.
+Coordinate the complete deterministic simulation lifecycle.
 
-The engine is the system orchestrator and must not absorb domain logic owned by other components.
+The engine is the system orchestrator and must not absorb domain logic owned by Strategy, Portfolio, position sizing, order generation, or execution.
 
-## Implemented Phase 2 Interface
+## Implemented Phase 3 Interface
 
-The current engine exposes:
+The current engine is constructed from:
 
 ```cpp
-explicit BacktestEngine(
-    data::HistoricalDataFeed data_feed
+BacktestEngine(
+    data::HistoricalDataFeed data_feed,
+    std::unique_ptr<strategy::Strategy> strategy,
+    portfolio::Portfolio portfolio,
+    portfolio::PositionSizer position_sizer
 );
+```
 
+It exposes:
+
+```cpp
 [[nodiscard]]
 std::optional<events::Event> step();
 
 [[nodiscard]]
 bool finished() const noexcept;
+
+[[nodiscard]]
+const portfolio::Portfolio& portfolio() const noexcept;
 ```
 
 The engine is non-copyable and movable.
 
+A null Strategy is invalid construction.
+
 ## Ownership
 
-`BacktestEngine` owns by value:
-
-- one `HistoricalDataFeed`
-- one `EventQueue`
-
-It also owns the minimal orchestration state required to remember whether feed exhaustion has been observed.
-
-This ownership keeps mutable simulation state local to one engine instance and prevents accidental duplication through copying.
-
-## Phase 2 Boundary
-
-The implemented Phase 2 path is:
+`BacktestEngine` owns the runtime state required for one simulation:
 
 ```text
 HistoricalDataFeed
-        ↓
-       Bar
-        ↓
-BacktestEngine
-        ↓
-   MarketEvent
-        ↓
-   EventQueue
-        ↓
-BacktestEngine::step()
-        ↓
-observable Event
+EventQueue
+std::unique_ptr<Strategy>
+Portfolio
+PositionSizer
+OrderGenerator
+ExecutionHandler
+optional active Bar
+feed-exhaustion state
 ```
 
-For Phase 2, `step()` is the incremental observable event boundary.
+Strategy uses exclusive polymorphic ownership through `std::unique_ptr<Strategy>`.
 
-Each successful call removes at most one pending `Event` from `EventQueue` and returns it to the caller.
+Portfolio, PositionSizer, OrderGenerator, ExecutionHandler, HistoricalDataFeed, and EventQueue are owned by the engine.
 
-The Phase 2 engine:
+Portfolio is exposed only through a const reference.
 
-- processes pending queued work before requesting another historical bar
-- requests historical bars sequentially
-- creates exactly one `MarketEvent` for every delivered `Bar`
-- enqueues generated events
-- removes pending events in deterministic FIFO order
-- exposes one event per successful `step()`
-- records feed exhaustion only after `HistoricalDataFeed::next()` returns `std::nullopt`
-- reports completion only when feed exhaustion has been observed and the queue is empty
+## Active Session
 
-Concrete dispatch to `Strategy`, `Portfolio`, or `ExecutionHandler` is deferred until those components exist.
+The engine may hold one `Bar` as active session context while several observable events derived from that session are processed.
 
-Type-specific event dispatch uses the closed `Event` variant and type-safe visitation where concrete handlers require it.
+The active Bar provides:
 
-During Phase 2, the engine must not implement:
+```text
+session date
+Open(t)  → execution orchestration
+Close(t) → sizing and valuation
+```
 
-- strategy rules
-- position sizing
-- portfolio accounting
-- order generation
-- execution-price selection
-- simulated fills
-- performance calculations
+ExecutionHandler does not receive the complete Bar.
 
-## Later Dependencies
+For next-open execution it receives only:
 
-As later phases are implemented, the engine will coordinate:
+```text
+session date
+open price
+current Portfolio
+```
 
-- `Strategy`
-- `Portfolio` / sizing logic
-- `ExecutionHandler`
+This prevents execution logic from observing the same session's High, Low, or Close.
 
-Those components remain separate owners of their domain behavior.
+## Session Lifecycle
 
-A full internal `run()` loop may be introduced when concrete event handlers exist.
+For one session `t`:
 
-## Full MVP Loop
+```text
+load Bar(t)
+        ↓
+attempt previous pending order at Open(t)
+        ↓
+optional FillEvent(t)
+        ↓
+queue MarketEvent(t)
+        ↓
+process queued events one at a time
+```
 
-Conceptually, later phases extend the loop toward:
+Concrete event dispatch is:
 
 ```text
 MarketEvent
-    → Strategy
-    → optional SignalEvent
+→ Strategy::on_market()
+→ append zero or more SignalEvents
 
 SignalEvent
-    → Portfolio / PositionSizer
-    → optional OrderEvent
+→ PositionSizer using active Close(t)
+→ OrderGenerator
+→ append optional OrderEvent
 
 OrderEvent
-    → ExecutionHandler
-    → pending execution state
-
-future market observation
-    → ExecutionHandler
-    → FillEvent
+→ ExecutionHandler::submit()
 
 FillEvent
-    → Portfolio
+→ Portfolio::apply_fill()
 ```
 
-The exact ordering between pending next-open fills, publication of newly completed bars, and portfolio valuation remains a Phase 3 temporal-design decision.
+When all events generated from the active session have been processed and `EventQueue` is empty:
+
+```text
+Portfolio.mark_to_market(session_date, Close(t))
+        ↓
+one PortfolioSnapshot(t)
+        ↓
+clear active session
+```
+
+A pending order stored by `ExecutionHandler` may remain after the active session closes because it belongs to a future execution opportunity.
+
+## `step()` Semantics
+
+`step()` processes and returns at most one observable `Event` per call.
+
+A returned event has already been processed internally by the engine before `step()` returns.
+
+Therefore:
+
+```text
+returned FillEvent
+→ Portfolio already reflects the fill
+
+returned MarketEvent
+→ Strategy has already processed it
+
+returned SignalEvent
+→ sizing and order generation have already run
+
+returned OrderEvent
+→ ExecutionHandler has already accepted it
+```
+
+Events generated by processing the current event remain queued for later `step()` calls.
+
+The engine processes all queued work for the active session before requesting another historical Bar.
+
+## Event Dispatch Safety
+
+The closed `Event` variant is dispatched with `std::visit`.
+
+The generic fallback uses a dependent compile-time `static_assert`, so adding a new event alternative without extending engine dispatch fails at compile time.
+
+## Data-Feed Exhaustion
+
+Historical-data exhaustion is observed only when:
+
+```cpp
+data_feed_.next()
+```
+
+returns:
+
+```cpp
+std::nullopt
+```
+
+Processing the final valid Bar does not by itself mark the feed exhausted.
+
+If an order remains pending when exhaustion is observed, the engine discards it without creating a synthetic fill.
+
+## Completion
+
+The engine is finished only when:
+
+```text
+historical-data exhaustion has been observed
+AND
+EventQueue is empty
+AND
+no active session remains
+AND
+ExecutionHandler has no pending order
+```
+
+Repeated calls after completion return no additional events and produce no additional financial state changes.
+
+## `run()` Boundary
+
+A separate `run()` method is not required for the current architecture.
+
+The complete simulation can already be driven with repeated `step()` calls while preserving event-by-event observability.
+
+A future `run()` may be added as a convenience wrapper around the same semantics rather than as a separate execution path.
 
 ---
 
@@ -883,30 +1005,44 @@ The engine owns coordination.
 
 It may:
 
-- advance the market-data feed
-- create market events from newly available bars
-- enqueue events
-- expose pending events through the current incremental dispatch boundary
-- coordinate concrete event handlers and execution opportunities in later phases
+- advance `HistoricalDataFeed`
+- maintain one active historical session
+- attempt previous pending execution at the current session open
+- create `MarketEvent` from the completed active Bar
+- enqueue and dispatch observable events deterministically
+- invoke Strategy, PositionSizer, OrderGenerator, ExecutionHandler, and Portfolio at the correct causal points
+- mark Portfolio to market at the completed session close
+- create exactly one Portfolio snapshot per completed session through Portfolio valuation
+- observe feed exhaustion
+- discard a terminal pending order when no future execution opportunity exists
 - terminate the simulation
-
-Phase 2 termination occurs when:
-
-```text
-HistoricalDataFeed is exhausted
-AND
-EventQueue is empty
-```
 
 The engine should not:
 
 - implement strategy rules
-- calculate order quantity itself
-- mutate portfolio accounting directly
-- choose execution prices
+- calculate target-position formulas itself
+- calculate order deltas itself
+- mutate Portfolio accounting except by dispatching `FillEvent`
+- determine execution approval or fill quantity itself
+- choose execution rules
 - calculate performance formulas
 
-For every bar delivered by `HistoricalDataFeed`, the Phase 2 engine must create and expose exactly one `MarketEvent` through `step()`.
+The engine validates composition invariants that exist only when otherwise valid components are combined.
+
+For the single-asset MVP, active market-data symbol and Portfolio symbol must agree.
+
+The engine also preserves these ordering guarantees:
+
+```text
+previous pending execution
+→ before current completed MarketEvent
+
+all current-session event work
+→ before loading next historical Bar
+
+session close valuation
+→ after current-session event chain completes
+```
 
 ---
 
@@ -914,36 +1050,57 @@ For every bar delivered by `HistoricalDataFeed`, the Phase 2 engine must create 
 
 ## Responsibility
 
-Consume observable market information and optionally produce trading intent.
+Consume observable market information and produce zero or more target-exposure signals.
 
-A minimal conceptual contract is:
+The implemented runtime-polymorphic contract is conceptually:
 
-```text
-on_market(event / bar)
-    → optional SignalEvent
+```cpp
+class Strategy {
+public:
+    Strategy() = default;
+    virtual ~Strategy() = default;
+
+    Strategy(const Strategy&) = delete;
+    Strategy& operator=(const Strategy&) = delete;
+    Strategy(Strategy&&) = default;
+    Strategy& operator=(Strategy&&) = default;
+
+    [[nodiscard]]
+    virtual std::vector<events::SignalEvent>
+    on_market(const events::MarketEvent& event) = 0;
+};
 ```
 
-The exact C++ interface may use:
+Returning an empty vector means no target-exposure change is requested.
 
-- a concrete strategy type
-- a small runtime-polymorphic interface
-- another minimal abstraction
+Strategy objects are non-copyable and movable so mutable strategy state is not accidentally duplicated.
 
-The design should support the two MVP strategies without creating a framework for hypothetical strategies.
+## Polymorphism
+
+Runtime polymorphism is implemented intentionally because concrete strategies form an extensible set while `BacktestEngine` depends on one stable Strategy interface.
+
+The engine owns the Strategy through:
+
+```cpp
+std::unique_ptr<Strategy>
+```
 
 ## Strategy-Owned State
 
 Examples:
 
 - entered/not-entered state for Buy-and-Hold
-- moving-average rolling state
-- previous regime/signal state
+- future moving-average rolling state
+- future regime/signal state
 
 ## Must Not Own
 
 - cash
 - executed position quantity
-- execution state
+- pending execution state
+- execution price selection
+
+Strategy must not mutate Portfolio, create fills, or access future Bars.
 
 ---
 
@@ -951,21 +1108,49 @@ Examples:
 
 ## Responsibility
 
-Generate the initial long intent required to establish the Buy-and-Hold position.
+Generate one initial `Long` target-exposure signal for its configured instrument.
 
-## State
+## Configuration and State
 
-Likely minimal state:
+The strategy stores:
 
 ```text
+configured symbol
 has_signaled_entry
 ```
 
-## Invariant
+The configured symbol must be non-empty.
 
-The strategy should not repeatedly generate unintended entry signals after its initial desired state is established.
+## Behavior
 
-This strategy should be implemented first because it exercises the whole system with minimal strategy complexity.
+```text
+first matching MarketEvent
+→ SignalEvent(Long)
+
+later matching MarketEvents
+→ no new signal
+
+unrelated MarketEvent
+→ no signal
+→ entry opportunity remains available
+```
+
+The emitted signal preserves:
+
+```text
+configured symbol
+triggering session date
+SignalDirection::Long
+```
+
+Buy-and-Hold does not determine quantity, order side, execution price, or execution timing.
+
+## Invariants
+
+- at most one `Long` entry signal is emitted for the configured symbol
+- unrelated symbols do not consume the entry opportunity
+- identical event sequences produce identical behavior
+- the strategy never mutates Portfolio or execution state
 
 ---
 
@@ -1020,82 +1205,120 @@ Only implement what the MVP strategy needs.
 
 ## Responsibility
 
-Own the financial state of the backtest.
+Own executed financial state and deterministic end-of-session valuation history.
 
-## Owned State
+Portfolio reflects what has actually been executed.
 
-For the MVP:
+It does not decide what should be traded.
+
+## Implemented State
+
+For the single-instrument MVP:
 
 ```text
+configured symbol
 initial capital
 current cash
 current signed position quantity
-latest valuation price
+latest mark price
 current market value
 current equity
-portfolio history
+chronological PortfolioSnapshot history
 ```
 
-Potential exact representation should remain simple because only one instrument exists.
+The configured symbol is non-empty.
+
+Initial capital is finite and strictly positive.
 
 ## Main Inputs
 
-- `SignalEvent` indirectly for order generation
-- `FillEvent` for executed state changes
-- observable market prices for valuation
+Portfolio state changes through two explicit operations:
+
+```text
+FillEvent
+→ apply_fill()
+→ executed cash and position change
+```
+
+and:
+
+```text
+session date + close mark
+→ mark_to_market()
+→ market value + equity + PortfolioSnapshot
+```
+
+Signals and orders do not mutate Portfolio.
 
 ## Main Outputs
 
-- `OrderEvent`
-- portfolio snapshots/history
+Portfolio exposes read-only current state and snapshot history.
+
+It does not produce `OrderEvent`.
+
+Order generation is owned by `OrderGenerator` after `PositionSizer` determines the target position.
 
 ---
 
 # 23. Portfolio Responsibilities
 
-The portfolio should:
+Portfolio should:
 
-- own cash
-- own executed position quantity
-- apply fills
-- calculate current market value
+- own initial capital and current cash
+- own executed signed position quantity
+- apply valid `FillEvent` accounting
+- calculate market value from the current mark
 - calculate current equity
-- record portfolio snapshots
-- provide the information needed for position sizing
+- record chronological `PortfolioSnapshot` values
+- expose current executed state read-only for sizing and execution checks
+- reject fills for another symbol
+- protect signed position arithmetic from overflow and underflow
+- calculate and validate candidate state before committing a multi-field mutation
 
-The portfolio should not:
+Portfolio should not:
 
 - acquire market data
 - generate strategy signals
+- determine target allocation
+- generate orders
 - choose execution price
+- perform buying-power approval
 - calculate final performance statistics
+
+Only `FillEvent` changes executed cash and position.
+
+Mark-to-market changes valuation state and snapshot history, not executed holdings.
 
 ---
 
 # 24. Position Representation
 
-Because the MVP contains only one instrument, the position representation can remain deliberately small.
-
-Conceptually:
+The implemented Portfolio position representation is deliberately small and signed:
 
 ```cpp
-using Quantity = ...;
-Quantity position_quantity;
+using PositionQuantity = std::int64_t;
 ```
 
-or a small `Position` value type if useful.
-
-Signed semantics:
+Semantics:
 
 ```text
-quantity > 0  → long
-quantity = 0  → flat
-quantity < 0  → short representation
+position_quantity > 0 → long
+position_quantity = 0 → flat
+position_quantity < 0 → short representation
 ```
 
-The MVP must prevent actual short behavior even though the representation is signed.
+Order and fill quantities remain unsigned magnitudes combined with an explicit side:
 
-Do not build a generic multi-position container solely for future multi-asset support.
+```text
+OrderSide::Buy  + std::uint64_t quantity
+OrderSide::Sell + std::uint64_t quantity
+```
+
+The MVP target-generation policy does not create short targets, but the Portfolio representation can encode future short positions without redesign.
+
+Conversions and arithmetic across signed Portfolio quantities and unsigned order/fill quantities must be range-checked before mutation.
+
+A generic multi-position container is intentionally outside the single-instrument MVP.
 
 ---
 
@@ -1103,68 +1326,128 @@ Do not build a generic multi-position container solely for future multi-asset su
 
 ## Responsibility
 
-Convert trading intent into a concrete quantity.
+Convert target-exposure intent into a deterministic target position quantity using current executed Portfolio state and an observable reference price.
 
 Conceptually:
 
 ```text
 SignalEvent
-+ Portfolio State
-+ Sizing Policy
++ current Portfolio state
++ observable reference price
++ configured target allocation
         ↓
-Order Quantity
+target position
 ```
 
-The MVP should use a deterministic policy.
+## Implemented Policy
 
-## Architecture Choice
+`PositionSizer` owns a configured target allocation satisfying:
 
-The position-sizing logic may initially be:
+```text
+0 < target_allocation <= 1
+```
 
-- a small dedicated component or
-- a clearly isolated policy used by `Portfolio`
+At signal time, reference equity is calculated from current executed state:
 
-A separate class is justified only if it improves clarity and testing.
+```text
+reference equity
+=
+cash
++
+current position × reference price
+```
 
-The important boundary is conceptual:
+For Phase 3, the observable reference price is the close of the completed active session.
 
-> Strategy decides direction; sizing decides quantity.
+For `Long`:
+
+```text
+target
+=
+floor(target_allocation × reference equity / reference price)
+```
+
+For `Flat`:
+
+```text
+target = 0
+```
+
+`Short` remains part of the event protocol but negative target generation is rejected by the long-only MVP policy.
+
+## Boundary
+
+PositionSizer:
+
+- reads Portfolio through a const reference
+- does not mutate Portfolio
+- does not know the future execution price
+- does not perform execution-time buying-power approval
+- does not create a fill
+
+The target quantity is desired state, not a guarantee that the complete requested transition remains executable at the next open.
 
 ---
 
 # 26. Order Generation
 
-The portfolio/order-generation layer converts a target intent into a required trade.
+`OrderGenerator` converts the target position into the concrete trade required to move from current executed state toward that target.
+
+The implemented rule is:
+
+```text
+delta
+=
+target position
+-
+current position
+```
+
+Then:
+
+```text
+delta > 0
+→ Buy abs(delta)
+
+delta < 0
+→ Sell abs(delta)
+
+delta = 0
+→ no OrderEvent
+```
+
+The generated order preserves:
+
+```text
+symbol          = originating SignalEvent symbol
+order_type      = Market
+submission_date = originating SignalEvent date
+```
 
 Examples:
 
 ```text
-currently flat
-+ Long signal
-→ Buy order
+current = 0
+target  = 10
+→ Buy 10
 ```
 
 ```text
-currently long
-+ Flat signal
-→ Sell order for held quantity
+current = 9
+target  = 0
+→ Sell 9
 ```
 
-Examples of no-op transitions:
-
 ```text
-currently long
-+ Long signal
+current = target
 → no order
 ```
 
-```text
-currently flat
-+ Flat signal
-→ no order
-```
+OrderGenerator is stateless.
 
-These transitions must be deterministic and directly testable.
+It does not mutate Portfolio, choose an execution price, apply buying-power rules, or create fills.
+
+Safe signed arithmetic is required when computing the distance between current and target positions.
 
 ---
 
@@ -1172,106 +1455,248 @@ These transitions must be deterministic and directly testable.
 
 ## Responsibility
 
-Own simulated execution assumptions.
+Own the MVP pending-order state and simulate deterministic next-open execution.
 
-The MVP execution handler receives market orders and produces fills according to the next-available-open rule.
+## Implemented Interface
 
-## Required Behavior
+Conceptually:
 
-```text
-Order submitted after completed bar t
-        ↓
-order remains pending
-        ↓
-bar t+1 becomes available
-        ↓
-use bar t+1 open
-        ↓
-FillEvent
+```cpp
+[[nodiscard]]
+bool has_pending_order() const noexcept;
+
+void submit(events::OrderEvent order);
+
+[[nodiscard]]
+std::optional<events::FillEvent> execute_on_open(
+    market::SessionDate session_date,
+    double open_price,
+    const portfolio::Portfolio& portfolio
+);
+
+void discard_pending() noexcept;
 ```
 
-## Owned State
+The handler is non-copyable and movable.
 
-The handler may need minimal pending-order state.
+## Pending-Order State
 
-Because the MVP supports only one instrument and simple market orders, this state should remain small.
+The MVP owns at most one pending `OrderEvent`.
+
+Submitting a second order while another remains pending is invalid.
+
+The pending lifecycle is:
+
+```text
+submit
+→ pending
+→ first valid later session open
+→ one execution attempt
+→ pending state cleared
+```
+
+A same-session open is not eligible and preserves the pending order.
+
+An execution date earlier than submission is invalid and preserves pending state.
+
+## Execution Price
+
+Only market orders are supported.
+
+The execution price is:
+
+```text
+current eligible session open
+```
+
+The execution API receives only session date, open price, and current Portfolio.
+
+It does not receive the complete Bar and therefore cannot inspect the same session's High, Low, or Close.
+
+## Buy-Side Buying Power
+
+For a Buy order:
+
+```text
+available cash = max(current cash, 0)
+maximum affordable quantity
+=
+floor(available cash / open price)
+```
+
+Approved quantity is:
+
+```text
+min(requested quantity, maximum affordable quantity)
+```
+
+If approved quantity is positive, one `FillEvent` is produced for exactly the approved quantity.
+
+If approved quantity is zero, no fill is produced.
+
+In both cases, the valid execution attempt consumes the complete pending order.
+
+No residual quantity remains pending.
+
+## Sell-Side Execution
+
+Sell orders execute their complete requested quantity.
+
+The long-only target-generation policy is responsible for avoiding short-producing targets.
+
+ExecutionHandler does not reinterpret strategy intent.
+
+## Fill Semantics
+
+A successful execution produces:
+
+```text
+symbol     = pending order symbol
+side       = pending order side
+quantity   = approved quantity
+fill_price = current open price
+fill_date  = current session date
+fees       = 0
+```
+
+ExecutionHandler does not apply the fill to Portfolio.
+
+Portfolio mutation occurs only when `BacktestEngine` later dispatches that `FillEvent`.
+
+## Validation and Exception Safety
+
+Invalid session dates, invalid open prices, symbol mismatch, or execution dates earlier than submission do not consume the pending order.
+
+A valid result is constructed before pending state is cleared.
+
+This preserves pending state if fill construction itself fails.
 
 ## Invariants
 
-- order cannot fill before submission
-- order cannot use the same completed bar's open after observing its close
-- valid pending market order fills at the next available open
-- fill quantity equals order quantity
-- execution is deterministic
+- at most one order is pending
+- only market orders are supported
+- same-session execution is impossible
+- an eligible later open provides one execution attempt
+- Buy approval never exceeds requested quantity
+- Buy approval never exceeds cash-only buying power
+- Sell approval equals requested quantity
+- filled quantity equals approved quantity
+- zero-approved Buy produces no fill
+- every valid eligible attempt clears the complete pending order
+- no residual order quantity is retained
+- fees are zero in the MVP
+- ExecutionHandler never mutates Portfolio
+- ExecutionHandler never observes High, Low, or Close at execution time
 
 ---
 
 # 28. End-of-Data Execution Policy
 
-A specific edge case must be defined before Phase 3 is completed:
+An order created from the final completed market session may remain pending after that session has been valued.
+
+The implemented policy is:
 
 ```text
-signal/order generated on final available bar
+final completed MarketEvent
         ↓
-no next bar exists
+optional SignalEvent
+        ↓
+optional OrderEvent
+        ↓
+pending order
+        ↓
+HistoricalDataFeed::next()
+returns std::nullopt
+        ↓
+feed exhaustion is now observed
+        ↓
+ExecutionHandler::discard_pending()
+        ↓
+no FillEvent
 ```
 
-The recommended MVP policy is:
+The engine must not:
 
-> The order remains unfilled and the backtest ends without synthesizing an execution price.
+- fabricate a future session
+- execute at the final close
+- replay the final Bar
+- invent an execution price
 
-This should be confirmed during implementation and covered by a deterministic test.
+The final pending order is discarded only after feed exhaustion has actually been observed.
 
-Do not invent a final close fill unless the MVP scope is explicitly changed.
+A pending order by itself therefore does not mean the simulation is permanently blocked at end-of-data.
 
 ---
 
 # 29. Portfolio Valuation
 
-Portfolio valuation is distinct from execution.
+Portfolio valuation is distinct from execution accounting.
 
-The portfolio must record equity using information that is valid at the simulated point in time.
+Execution uses the actual fill price.
 
-Conceptually:
+End-of-session valuation uses the active session close.
+
+For the single-instrument MVP:
 
 ```text
-cash
-+
-position quantity × observable valuation price
+market value
 =
-equity
+signed position quantity × session close
 ```
 
-The exact daily snapshot timing must be fixed during Phase 3.
+and:
 
-A recommended direction is to maintain one consistent end-of-step valuation convention after all events valid for that simulation step have been processed.
+```text
+equity
+=
+cash + market value
+```
 
-The convention must be:
+The engine invokes mark-to-market exactly once after the complete event chain for the active session has been processed and `EventQueue` is empty.
 
-- explicit
-- deterministic
-- compatible with the next-open execution model
-- used consistently by performance calculations
+Therefore the ordering is:
+
+```text
+optional open FillEvent
+→ fill accounting
+→ completed MarketEvent
+→ optional SignalEvent
+→ optional OrderEvent for a future session
+→ Close(t) mark-to-market
+→ PortfolioSnapshot(t)
+```
+
+A newly created pending order does not change current cash or holdings and therefore does not alter the current session snapshot except through already-executed state.
+
+The valuation convention is deterministic and is the basis for later performance calculations.
 
 ---
 
 # 30. PortfolioSnapshot
 
-A small value type is recommended for portfolio history.
+`PortfolioSnapshot` is an implemented value type representing end-of-session Portfolio state.
 
-Conceptually:
+Its minimum payload is:
 
 ```text
-timestamp
+session_date
 cash
-position quantity
-market value
+position_quantity
+market_value
 equity
 ```
 
-Potential additional fields should be added only if required by outputs or validation.
+Exactly one snapshot is recorded for each completed historical session when `BacktestEngine` closes the active session.
 
-Snapshots should represent observed portfolio state, not expose mutable portfolio internals.
+No artificial pre-session snapshot is created before the first completed market session.
+
+Snapshots are historical values.
+
+Later mutations of the live Portfolio do not modify already recorded snapshots.
+
+Snapshot dates must be strictly chronological.
+
+The snapshot history is the deterministic source for later equity-curve and performance analysis.
 
 ---
 
@@ -1455,21 +1880,31 @@ Additional order types or execution modes should not be added until their semant
 
 # 39. Ownership Model
 
-Prefer simple ownership.
+Prefer simple and explicit ownership.
 
-General direction:
+The implemented Phase 3 ownership model is:
 
-- immutable/value-like events
-- value-like domain objects
+- `Bar` is a value type
 - `MarketEvent` owns its `Bar` by value
+- `Event` is a value-like closed `std::variant`
 - `EventQueue` owns pending `Event` values
-- `BacktestEngine` owns its `HistoricalDataFeed` and `EventQueue` by value
-- the engine is non-copyable and movable
-- components are constructed by application wiring
-- references or pointers are used only when lifetime is obvious
-- no global mutable state
+- `HistoricalDataFeed` owns historical Bars and its cursor state
+- `BacktestEngine` owns `HistoricalDataFeed` and `EventQueue`
+- `BacktestEngine` owns Strategy exclusively through `std::unique_ptr<Strategy>`
+- `BacktestEngine` owns Portfolio, PositionSizer, OrderGenerator, and ExecutionHandler
+- `BacktestEngine` owns one optional active Bar as current-session context
+- `ExecutionHandler` owns at most one optional pending OrderEvent
+- Strategy owns strategy-specific mutable state
+- Portfolio owns executed financial state and valuation history
+- callers receive read-only Portfolio access from the engine
+- state-owning engine, queue, Strategy, Portfolio, and ExecutionHandler types use ownership policies that prevent accidental duplication where required
+- no global mutable state is used
 
-Ownership remains obvious from the public API.
+Ownership remains obvious from public APIs.
+
+Pointers are used where runtime polymorphic ownership is required.
+
+References are used for non-owning read-only access when lifetime is controlled by the caller.
 
 ---
 
@@ -1499,7 +1934,7 @@ The project should not force a single error mechanism everywhere.
 
 # 41. Testing Architecture
 
-Testing should mirror component boundaries.
+Testing mirrors component boundaries and increases in scope:
 
 ```text
 Unit Tests
@@ -1511,51 +1946,106 @@ Engine Integration Tests
 Manual-Oracle End-to-End Test
 ```
 
+Through Phase 3, all four layers are implemented.
+
+Unit tests protect individual domain contracts.
+
+Integration tests verify that independently validated components compose without changing their meaning.
+
+The manual-oracle test verifies the complete financial path against values calculated independently from the production implementation.
+
+Deterministic repeated-run tests verify that identical inputs and initial state produce identical event and Portfolio histories.
+
 ---
 
 # 42. Unit-Test Targets
 
-Examples:
+Implemented and planned unit-test boundaries include:
 
 ## Data
 
-- `Bar` validation where applicable
+- `Bar` validation
 - CSV parsing
-- timestamp parsing
+- session-date parsing
 - invalid-row behavior
+- chronological dataset validation
+- `HistoricalDataFeed` sequential delivery and exhaustion
 
 ## Events
 
-- event construction
-- event type dispatch
+- event construction and invariants
+- event alternative preservation
+- type-safe dispatch
+- EventQueue FIFO behavior and ownership semantics
 
 ## Strategy
 
-- Buy-and-Hold signal behavior
-- MA warm-up
-- crossover transitions
+- Buy-and-Hold configuration
+- first matching `Long` signal
+- no repeated entry signal
+- unrelated-symbol behavior
+- independent Strategy state
+- deterministic repeated behavior
+- future MA warm-up and crossover transitions
 
 ## Portfolio
 
-- signal-to-order transitions
-- fill accounting
-- equity calculation
+- construction invariants
+- Buy and Sell fill accounting
+- fees
+- signed position arithmetic
+- symbol validation
+- mark-to-market
+- PortfolioSnapshot history
+- separation between fills and valuation
+
+## Position Sizing and Order Generation
+
+- target-allocation validation
+- reference-equity calculation
+- `Long` and `Flat` target quantities
+- rejection of `Short` targets under MVP policy
+- Buy and Sell order deltas
+- zero-delta no-order behavior
+- signed arithmetic boundaries
+- no Portfolio mutation
 
 ## Execution
 
+- pending-order lifecycle
+- second-order rejection while pending
+- same-session non-execution
+- earlier-date rejection
 - next-open fill timing
-- final-bar unfilled order
-- fill price and quantity
+- Buy-side buying-power clipping
+- zero-approved no-fill behavior
+- Sell requested-quantity execution
+- fill fields and fees
+- pending-state preservation on validation failure
+- explicit terminal discard
+- no Portfolio mutation
+
+## Engine
+
+- null Strategy rejection
+- single-symbol composition invariant
+- market-only compatibility with a silent Strategy
+- event ordering
+- processed-before-return behavior
+- exactly one snapshot per completed session
+- final pending-order discard
+- exhaustion and stable completion
+- deterministic repeated runs
 
 ## Performance
 
-- each metric against known values
+Phase 4 will add deterministic known-result tests for each required metric.
 
 ---
 
 # 43. Integration Tests
 
-Important integration boundaries include:
+Important implemented integration boundaries include:
 
 ```text
 CsvBarReader
@@ -1568,59 +2058,101 @@ canonical CSV
 → HistoricalDataFeed
 → BacktestEngine
 → MarketEvent
-→ EventQueue
-→ BacktestEngine::step()
-→ deterministic observable Event sequence
+→ deterministic observable sequence
 ```
 
 ```text
 MarketEvent
 → Strategy
 → SignalEvent
-```
-
-```text
-SignalEvent
-→ Portfolio
+→ PositionSizer
+→ OrderGenerator
 → OrderEvent
 ```
 
 ```text
-OrderEvent
+previous OrderEvent
+→ next eligible Open
 → ExecutionHandler
 → FillEvent
-```
-
-```text
-FillEvent
 → Portfolio
 ```
 
-Phase 2 must assert the exact event sequence produced from a deterministic historical fixture and verify that repeated runs produce the same sequence.
+```text
+complete active-session event chain
+→ Close valuation
+→ PortfolioSnapshot
+```
 
-The most important later integration test remains the complete manual-oracle backtest.
+Phase 3 engine integration validates:
+
+- `MarketEvent → SignalEvent → OrderEvent` causal ordering
+- pending orders survive the session boundary
+- next-session `FillEvent` precedes that session's completed `MarketEvent`
+- Buy clipping propagates into Portfolio accounting
+- Portfolio is updated before the corresponding `FillEvent` is returned by `step()`
+- no later session loads before current-session event work is complete
+- each completed session produces exactly one snapshot
+- final-session pending orders are discarded without synthetic execution
+- complete event and Portfolio histories are deterministic
+
+The manual-oracle end-to-end test then validates the complete financial trajectory independently.
 
 ---
 
 # 44. Manual-Oracle Architecture
 
-The end-to-end deterministic fixture should be isolated from real provider data.
+The Phase 3 end-to-end oracle is intentionally small and independent from real provider data.
 
-Recommended structure:
+It is implemented directly in the deterministic C++ end-to-end test rather than depending on live data or production-generated expected values.
+
+The canonical scenario uses four sessions and a test-only deterministic Strategy:
 
 ```text
-tests/
-└── fixtures/
-    └── manual_oracle/
-        ├── bars.csv
-        └── expected_results...
+Session 1 → Long
+Session 3 → Flat
+otherwise → no signal
 ```
 
-The exact file layout may change.
+With:
+
+```text
+initial capital = 1,000
+target allocation = 100%
+fees = 0
+slippage = 0
+```
+
+the manually calculated path exercises:
+
+```text
+Long signal
+→ Buy 10 requested
+→ upward gap at next Open
+→ Buy clipped to 9
+→ Portfolio accounting
+→ close valuation
+→ Flat signal
+→ Sell 9 requested
+→ next-open Sell 9 fill
+→ return to cash
+```
+
+The expected result is defined independently:
+
+```text
+10 observable Events
+4 PortfolioSnapshots
+final cash = 1,135
+final position = 0
+final equity = 1,135
+```
 
 The important principle is:
 
-> The oracle must remain small enough that every expected transition can be independently verified.
+> Expected values are calculated by hand first and are not generated by the production code under test.
+
+This oracle is the principal Phase 3 system-level correctness reference.
 
 ---
 
@@ -1628,87 +2160,46 @@ The important principle is:
 
 The repository grows only when real components are implemented.
 
-After Phase 2, the relevant implemented structure is conceptually:
+Through Phase 3, the architecture includes these implemented C++ module boundaries:
 
 ```text
-event-driven-backtester/
-├── CMakeLists.txt
-├── CMakePresets.json
-├── pyproject.toml
-│
-├── docs/
-│   ├── architecture.md
-│   ├── data-architecture.md
-│   ├── development-guide.md
-│   ├── knowledge-guide.md
-│   ├── mvp-bar-contract.md
-│   ├── MVP-scope.md
-│   ├── post-mvp-architecture.md
-│   ├── project-principles.md
-│   └── references.md
-│
-├── include/
-│   └── backtester/
-│       ├── market/
-│       │   └── bar.hpp
-│       ├── data/
-│       │   ├── csv_bar_reader.hpp
-│       │   └── historical_data_feed.hpp
-│       ├── events/
-│       │   ├── event.hpp
-│       │   └── event_queue.hpp
-│       └── engine/
-│           └── backtest_engine.hpp
-│
-├── src/
-│   ├── market/
-│   │   └── bar.cpp
-│   ├── data/
-│   │   ├── csv_bar_reader.cpp
-│   │   └── historical_data_feed.cpp
-│   ├── events/
-│   │   ├── event.cpp
-│   │   └── event_queue.cpp
-│   └── engine/
-│       └── backtest_engine.cpp
-│
-├── python/
-│   └── backtester_data/
-│       ├── acquisition.py
-│       ├── validation.py
-│       ├── normalization.py
-│       ├── persistence.py
-│       └── pipeline.py
-│
-├── scripts/
-│   └── build_daily_data.py
-│
-├── tests/
-│   ├── cpp/
-│   │   ├── test_bar.cpp
-│   │   ├── test_csv_bar_reader.cpp
-│   │   ├── test_historical_data_feed.cpp
-│   │   ├── test_csv_historical_data_feed.cpp
-│   │   ├── test_event.cpp
-│   │   ├── test_event_queue.cpp
-│   │   ├── test_backtest_engine.cpp
-│   │   └── test_phase_2_integration.cpp
-│   └── python/
-│       ├── test_acquisition.py
-│       ├── test_validation.py
-│       ├── test_normalization.py
-│       ├── test_persistence.py
-│       └── test_pipeline.py
-│
+include/backtester/
+├── market/
+│   └── bar.hpp
 ├── data/
-│   ├── fixtures/
-│   ├── raw/
-│   └── canonical/
-│
-└── output/
+│   ├── csv_bar_reader.hpp
+│   └── historical_data_feed.hpp
+├── events/
+│   ├── event.hpp
+│   └── event_queue.hpp
+├── strategy/
+│   └── strategy.hpp
+├── portfolio/
+│   ├── portfolio.hpp
+│   ├── position_sizer.hpp
+│   └── order_generator.hpp
+├── execution/
+│   └── execution_handler.hpp
+└── engine/
+    └── backtest_engine.hpp
 ```
 
-Later-phase directories should be created only when their components actually exist.
+The concrete Buy-and-Hold implementation is colocated in the Strategy module.
+
+Corresponding implementation files live under the matching `src/` domains.
+
+Relevant Phase 3 tests include:
+
+```text
+tests/cpp/test_phase_3_engine_integration.cpp
+tests/cpp/test_phase_3_end_to_end.cpp
+```
+
+alongside the existing component unit tests and Phase 1/2 integration tests.
+
+The Python data workflow remains under the provider-specific Python modules established in Phase 1.
+
+Later-phase Performance, Reporting, and CLI files should be created only when those components are implemented.
 
 Do not create empty architecture merely to match a planned tree.
 
@@ -1716,11 +2207,9 @@ Do not create empty architecture merely to match a planned tree.
 
 # 46. Header and Source Organization
 
-Do not create one class merely to match every directory.
-
 Create files only when a real component exists.
 
-Implemented through Phase 2:
+Implemented public Phase 3 architecture includes:
 
 ```text
 include/backtester/market/bar.hpp
@@ -1731,24 +2220,28 @@ include/backtester/data/historical_data_feed.hpp
 include/backtester/events/event.hpp
 include/backtester/events/event_queue.hpp
 
-include/backtester/engine/backtest_engine.hpp
-```
-
-Potential later files may include:
-
-```text
 include/backtester/strategy/strategy.hpp
-include/backtester/strategy/buy_and_hold.hpp
-include/backtester/strategy/moving_average_crossover.hpp
 
 include/backtester/portfolio/portfolio.hpp
+include/backtester/portfolio/position_sizer.hpp
+include/backtester/portfolio/order_generator.hpp
 
 include/backtester/execution/execution_handler.hpp
 
-include/backtester/performance/performance.hpp
+include/backtester/engine/backtest_engine.hpp
 ```
 
-Exact later names may change during implementation.
+Concrete Strategy implementations are kept inside the Strategy domain.
+
+Corresponding `.cpp` implementation files are kept under matching `src/` domains when an out-of-line implementation is required.
+
+Potential later modules include:
+
+```text
+backtester::performance
+reporting / export
+CLI application wiring
+```
 
 Avoid premature file proliferation.
 
@@ -1756,9 +2249,7 @@ Avoid premature file proliferation.
 
 # 47. Namespace
 
-Use a single top-level namespace.
-
-Recommended:
+Use a single top-level namespace:
 
 ```cpp
 namespace backtester {
@@ -1766,27 +2257,27 @@ namespace backtester {
 }
 ```
 
-Nested namespaces mirror meaningful domains.
+Nested namespaces mirror meaningful implemented domains.
 
-Currently implemented:
+Implemented through Phase 3:
 
 ```cpp
 backtester::market
 backtester::data
 backtester::events
-backtester::engine
-```
-
-Later domains may include:
-
-```cpp
 backtester::strategy
 backtester::portfolio
 backtester::execution
+backtester::engine
+```
+
+A later domain may include:
+
+```cpp
 backtester::performance
 ```
 
-Only introduce them when they improve clarity.
+Only introduce new namespaces when they improve clarity.
 
 Do not create deep namespace hierarchies.
 
@@ -1938,16 +2429,31 @@ Deterministic fixtures required by the test suite should be committed.
 | State | Owner |
 |---|---|
 | historical dataset / cursor | `HistoricalDataFeed` |
-| pending events | `EventQueue` |
-| feed-exhaustion / orchestration state | `BacktestEngine` |
-| strategy-specific state | `Strategy` |
-| pending execution state | `ExecutionHandler` |
+| pending observable events | `EventQueue` |
+| active session `Bar` | `BacktestEngine` |
+| feed-exhaustion state | `BacktestEngine` |
+| Strategy polymorphic lifetime | `BacktestEngine` |
+| strategy-specific mutable state | concrete `Strategy` |
+| target-allocation configuration | `PositionSizer` |
+| order-generation logic | stateless `OrderGenerator` |
+| pending execution order | `ExecutionHandler` |
 | cash | `Portfolio` |
-| position quantity | `Portfolio` |
-| portfolio valuation history | `Portfolio` |
-| completed performance results | performance/reporting layer |
+| signed position quantity | `Portfolio` |
+| latest mark / market value / equity | `Portfolio` |
+| Portfolio snapshot history | `Portfolio` |
+| completed performance results | future performance/reporting layer |
 
 Every mutable state item should have one obvious owner.
+
+The active session and pending execution order are deliberately different kinds of state:
+
+```text
+active Bar
+→ current session still being processed
+
+pending OrderEvent
+→ future execution opportunity
+```
 
 ---
 
@@ -1962,26 +2468,30 @@ Every mutable state item should have one obvious owner.
 | Python pipeline | Orchestrate the data workflow | Absorb validation or normalization rules |
 | `Bar` | Represent one valid canonical daily observation | Know provider details |
 | `CsvBarReader` | Parse canonical data | Know provider details |
-| `HistoricalDataFeed` | Reveal bars sequentially | Generate signals |
-| `Strategy` | Generate trading intent | Modify portfolio |
-| `PositionSizer` | Determine quantity | Choose execution price |
-| `Portfolio` | Own cash/positions/equity | Acquire data |
-| `ExecutionHandler` | Apply fill assumptions | Generate strategy intent |
-| `BacktestEngine` | Coordinate event flow | Absorb domain logic |
-| `Performance` | Evaluate results | Affect trading decisions |
+| `HistoricalDataFeed` | Reveal Bars sequentially | Generate signals |
+| `Strategy` | Generate target-exposure intent | Modify Portfolio or execution state |
+| `PositionSizer` | Determine target position from observable state | Assume future execution price |
+| `OrderGenerator` | Convert current/target position into optional order | Execute or mutate Portfolio |
+| `Portfolio` | Own executed financial state and valuation history | Generate orders or choose execution price |
+| `ExecutionHandler` | Own pending order and simulate next-open execution | Generate Strategy intent or mutate Portfolio |
+| `BacktestEngine` | Coordinate causal event flow and session progression | Absorb domain calculations |
+| `Performance` | Evaluate completed results | Affect trading decisions |
 | `Reporting` | Serialize/visualize results | Alter simulation |
+
+The engine owns coordination while each domain component owns its own calculation and state transition rules.
 
 ---
 
 # 54. Important MVP Invariants
 
-The following invariants should shape implementation and tests.
+The following invariants shape implementation and tests.
 
 ## Data
 
-- bars are valid
-- bars are chronologically ordered
-- future bars are inaccessible through normal simulation behavior
+- Bars are valid
+- Bars are chronologically ordered
+- future Bars are inaccessible through normal simulation behavior
+- one historical session is active at most once
 
 ## Events
 
@@ -1991,39 +2501,73 @@ The following invariants should shape implementation and tests.
 - event type is preserved through queueing and dispatch
 - `EventQueue` preserves FIFO insertion order
 - the queue does not independently reorder events by timestamp
-- event processing is deterministic
+- all event processing is deterministic
 - each queued event can be removed at most once
-- each event exposed by the current Phase 2 engine boundary is returned once
-- each delivered historical bar produces exactly one `MarketEvent`
-- repeated runs over the same input produce the same event sequence
+- every delivered historical Bar produces one `MarketEvent`
+- engine dispatch is exhaustive for the closed `Event` protocol
 
 ## Strategy
 
-- signals use only currently available information
-- strategy does not mutate portfolio state
+- Strategy observes only completed `MarketEvent` information
+- Strategy cannot inspect future Bars
+- Strategy does not mutate Portfolio
+- Strategy expresses desired exposure rather than execution instructions
+- Buy-and-Hold emits at most one entry `Long` signal for its configured symbol
 
-## Orders
+## Sizing and Orders
 
-- an order exists before its fill
-- quantity and side are explicit
+- target sizing uses only observable state and reference price
+- sizing does not assume the future execution price
+- `Long` and `Flat` produce non-negative targets under MVP policy
+- `Short` target generation is rejected by the long-only MVP policy
+- order quantity and side are explicit
+- zero target delta produces no order
+- creating an order does not change executed holdings
+- a decision generated from completed session `t` cannot execute at `Open(t)`
 
 ## Execution
 
+- at most one order is pending
+- pending execution state is owned by `ExecutionHandler`
 - next-open rule is enforced
-- same-bar look-ahead execution is impossible
-- fill price is observable at the fill time
+- same-session execution is impossible
+- execution observes only session date, open price, and current Portfolio
+- Buy approval uses execution-time cash and open price
+- Buy approval cannot exceed requested quantity or cash-only buying power
+- Sell approval equals requested quantity
+- filled quantity equals approved quantity
+- a valid execution attempt consumes the complete pending order
+- clipped quantity is not retried automatically
+- zero-approved Buy creates no fill
+- no synthetic execution occurs after data exhaustion
 
 ## Portfolio
 
-- holdings change only after fills
-- cash changes consistently with fills
+- only `FillEvent` changes executed cash and holdings
+- cash changes consistently with fills and fees
+- position quantity is signed
+- valuation is separate from execution accounting
 - equity equals cash plus marked position value
+- Portfolio is marked once at each completed session close
+- exactly one snapshot is recorded per completed session
+- snapshot dates are chronological
+- engine-owned Portfolio is externally read-only
+
+## Engine
+
+- pending current-session event work is processed before loading a later Bar
+- a prior pending order is resolved before the current session's completed `MarketEvent`
+- returned events have already been processed internally
+- feed exhaustion is recognized only after `HistoricalDataFeed::next()` returns `std::nullopt`
+- completion requires observed exhaustion, empty queue, no active session, and no pending order
+- repeated calls after completion do not change observable state
+- identical inputs and initial state produce identical event and Portfolio histories
 
 ## Performance
 
-- metrics are derived from completed portfolio history
+- metrics are derived from completed Portfolio history
 - formula conventions are explicit
-- deterministic known-result tests exist
+- deterministic known-result tests will protect Phase 4 quantitative calculations
 
 ---
 
@@ -2075,35 +2619,48 @@ These are non-MVP architectural directions, not current implementation requireme
 
 # 56. Architecture Decisions Deferred Until Implementation
 
+Phase 3 resolved several choices that were previously deferred:
 
-The following choices should **not** be frozen prematurely.
+```text
+Strategy polymorphism
+→ runtime-polymorphic Strategy interface
+→ exclusive ownership through std::unique_ptr<Strategy>
 
-## Strategy Polymorphism
+PositionSizer shape
+→ dedicated PositionSizer component
 
-Whether strategies use:
+Order generation
+→ dedicated stateless OrderGenerator
 
-- runtime polymorphism
-- templates
-- variants
-- another minimal approach
+Portfolio snapshot timing
+→ exactly once per completed session after the event chain
+→ valuation uses the current session close
 
-Choose the simplest design needed by CLI/runtime strategy selection.
+next-open execution input boundary
+→ session date + open price + const Portfolio
+```
 
-## PositionSizer Shape
+These are no longer open architectural questions.
 
-Separate component versus isolated portfolio policy.
+The following choices should still not be frozen prematurely.
 
-Choose when implementing Phase 3.
+## Performance Internal Shape
 
-## Exact Portfolio Snapshot Timing
+Phase 4 should use the smallest structure that cleanly supports the required return series, metrics, benchmark comparison, and deterministic known-result tests.
 
-Finalize with the manual oracle and temporal model.
+Do not design a generic analytics framework before those requirements are implemented.
+
+## Reporting and CLI Shape
+
+Output/export and application wiring should remain minimal until Phase 5 makes their exact needs concrete.
 
 ## Error Propagation Style
 
-Use the simplest consistent approach for each boundary.
+Use the simplest consistent mechanism for each boundary.
 
-These are implementation decisions, not missing project planning.
+The project does not require one universal error mechanism if exceptions or another explicit approach provide clearer ownership and control flow.
+
+Remaining deferred choices are implementation decisions, not missing project planning.
 
 ---
 
@@ -2111,8 +2668,8 @@ These are implementation decisions, not missing project planning.
 
 The following decisions are fixed for the MVP unless a correctness issue is found:
 
-- C++23 core
-- Python for acquisition/normalization/visualization
+- C++23 simulation core
+- Python for acquisition, normalization, and later visualization
 - one instrument
 - daily OHLCV
 - provider-independent canonical dataset
@@ -2127,27 +2684,51 @@ The following decisions are fixed for the MVP unless a correctness issue is foun
 - event-driven sequential engine
 - four explicit domain events: `MarketEvent`, `SignalEvent`, `OrderEvent`, and `FillEvent`
 - event values are represented as a closed `std::variant`
-- event dispatch uses type-safe visitation
+- event dispatch uses type-safe visitation with exhaustive compile-time fallback
 - `MarketEvent` owns its `Bar` by value
 - signal direction uses `Long`, `Short`, and `Flat` target-exposure semantics
+- Strategy uses runtime polymorphism
+- `BacktestEngine` owns Strategy through `std::unique_ptr<Strategy>`
+- Buy-and-Hold emits one initial `Long` target and then remains silent
+- signed Portfolio position representation uses `std::int64_t`
+- order and fill quantities are unsigned magnitudes with explicit side
+- `PositionSizer` is a dedicated component
+- target allocation is configuration
+- sizing uses current executed Portfolio state and an observable close reference
+- `OrderGenerator` is a dedicated stateless component
+- target minus current position determines the order transition
 - `FillEvent` represents execution facts and includes fees
 - slippage is derived execution analysis rather than a fundamental fill field
 - `EventQueue` is deterministic FIFO dispatch infrastructure
 - scheduling and dispatch queueing are separate responsibilities
-- `BacktestEngine` owns `HistoricalDataFeed` and `EventQueue` by value
+- `BacktestEngine` owns `HistoricalDataFeed`, `EventQueue`, Portfolio, PositionSizer, OrderGenerator, and ExecutionHandler
+- `BacktestEngine` owns one optional active Bar for current-session context
 - `BacktestEngine` is non-copyable and movable
-- `BacktestEngine::step()` is the Phase 2 incremental observable event boundary
-- engine completion requires observed feed exhaustion and an empty `EventQueue`
-- explicit signal/order/fill distinction
-- long/flat trading behavior for the MVP
-- signed position representation
-- market orders
+- `BacktestEngine::step()` is the incremental observable event boundary
+- returned events are processed internally before being returned
+- current-session event work completes before the next historical Bar is loaded
+- single-symbol market-data and Portfolio composition must agree
+- market orders only
+- at most one pending order
+- pending order state belongs to `ExecutionHandler`
 - next-available-open execution
-- deterministic full fills
+- same-session execution is impossible
+- Buy execution is clipped to execution-time cash-only buying power when necessary
+- Sell execution uses requested quantity
+- filled quantity equals approved quantity
+- no residual order remains after the single eligible execution attempt
+- fees are zero in the execution MVP
+- no slippage or liquidity model in the MVP
+- only `FillEvent` changes executed cash and holdings
+- Portfolio valuation uses the completed session close
+- exactly one PortfolioSnapshot is recorded per completed session
+- final pending orders are discarded only after feed exhaustion is observed
+- engine completion requires observed feed exhaustion, empty EventQueue, no active session, and no pending execution order
 - no concurrency in the MVP
-- strategy separated from execution
-- portfolio separated from strategy
-- performance separated from trading logic
+- strategy is separated from execution
+- Portfolio is separated from Strategy
+- performance is separated from trading logic
+- deterministic identical inputs produce identical observable events and Portfolio histories
 
 ---
 
@@ -2181,27 +2762,42 @@ OrderEvent
 FillEvent
 Event = std::variant<...>
 EventQueue
-BacktestEngine
+minimal BacktestEngine
 incremental step() boundary
 canonical CSV → CsvBarReader → HistoricalDataFeed → BacktestEngine integration
 deterministic repeated-run validation
 ```
 
-Phase 2 establishes the deterministic event protocol and market-only engine loop. Strategy, portfolio, and execution behavior remain Phase 3 work.
+Phase 2 established the deterministic event protocol and market-only engine foundation.
 
 ## Phase 3
 
-Build:
+Implemented:
 
 ```text
-Strategy
+frozen temporal and financial contracts
+Strategy interface
 BuyAndHoldStrategy
-PositionSizer / sizing policy
 Portfolio
+PortfolioSnapshot
+signed PositionQuantity
+PositionSizer
+OrderGenerator
 ExecutionHandler
-complete event flow
-manual oracle
+single pending market order
+next-available-open execution
+execution-time Buy clipping
+fill-driven accounting
+daily close mark-to-market
+integrated BacktestEngine lifecycle
+processed-before-return step() semantics
+active-session state
+terminal pending-order discard
+manual financial oracle
+end-to-end deterministic validation
 ```
+
+Phase 3 turns the event foundation into a functioning deterministic trading and Portfolio simulation.
 
 ## Phase 4
 
@@ -2210,6 +2806,7 @@ Build:
 ```text
 MovingAverage
 MovingAverageCrossoverStrategy
+return series
 Performance
 Benchmark
 ```
@@ -2347,7 +2944,95 @@ Strategy, Portfolio, order-generation behavior, and execution remain intentional
 
 ---
 
-# 62. Final Architectural Principle
+# 62. Phase 3 Implementation Outcome
+
+Phase 3 established and validated the complete deterministic trading and Portfolio lifecycle.
+
+The implemented causal path is:
+
+```text
+previous pending OrderEvent
+        ↓
+current session Open
+        ↓
+ExecutionHandler
+        ↓
+optional FillEvent
+        ↓
+Portfolio.apply_fill()
+
+completed MarketEvent
+        ↓
+Strategy
+        ↓
+optional SignalEvent
+        ↓
+PositionSizer
+        ↓
+target position
+        ↓
+OrderGenerator
+        ↓
+optional OrderEvent
+        ↓
+ExecutionHandler pending state
+
+current session Close
+        ↓
+Portfolio.mark_to_market()
+        ↓
+PortfolioSnapshot
+```
+
+The implementation was validated at multiple levels:
+
+- Strategy contract and Buy-and-Hold behavior
+- signed Portfolio accounting and valuation
+- target-position sizing from observable state
+- deterministic order generation
+- next-open ExecutionHandler behavior
+- execution-time Buy-side cash clipping
+- complete `BacktestEngine` integration
+- exact event ordering across session boundaries
+- exactly one Portfolio snapshot per completed session
+- final-session pending-order discard without synthetic execution
+- stable completion after observed feed exhaustion
+- deterministic repeated-run event and Portfolio histories
+- an independent four-session manual financial oracle
+- Debug and Release C++ test execution
+
+The canonical end-to-end oracle validates:
+
+```text
+initial cash = 1,000
+Long signal
+→ Buy 10 requested
+→ Buy 9 filled at next Open after upward-gap clipping
+→ invested Portfolio valuation
+→ Flat signal
+→ Sell 9 requested
+→ Sell 9 filled at next Open
+→ final cash = 1,135
+→ final position = 0
+→ final equity = 1,135
+```
+
+The exact system-level result is:
+
+```text
+10 observable Events
+4 PortfolioSnapshots
+147 / 147 tests passed in Debug
+147 / 147 tests passed in Release
+```
+
+No production-code change was required to make the manual oracle pass.
+
+The Phase 3 architecture therefore has deterministic evidence that its temporal model, event ordering, execution path, accounting, valuation, and termination semantics compose correctly.
+
+---
+
+# 63. Final Architectural Principle
 
 The architecture should preserve the causal structure of the trading system:
 

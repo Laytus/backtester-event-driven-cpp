@@ -663,18 +663,25 @@ Produce the first complete end-to-end backtest.
 
 This is the most important functional milestone of the MVP.
 
-The target lifecycle is:
+The implemented lifecycle is:
 
 ```text
-MarketEvent
+completed MarketEvent
 → Strategy
-→ SignalEvent
-→ Portfolio / Position Sizing
-→ OrderEvent
-→ ExecutionHandler
-→ FillEvent
-→ Portfolio
+→ optional SignalEvent
+→ PositionSizer
+→ target position
+→ OrderGenerator
+→ optional OrderEvent
+→ ExecutionHandler pending state
+→ first eligible later session Open
+→ optional FillEvent
+→ Portfolio accounting
+→ session Close valuation
+→ PortfolioSnapshot
 ```
+
+The engine must preserve the causal separation between a decision made from `Close(t)` and execution at a later available open.
 
 ---
 
@@ -686,25 +693,44 @@ Use the Phase 3 section of `references.md`.
 
 ## Core Deliverables
 
-- [ ] strategy contract
-- [ ] Buy-and-Hold strategy
-- [ ] signal semantics
-- [ ] deterministic position-sizing policy
-- [ ] order generation
-- [ ] position representation
-- [ ] portfolio accounting
-- [ ] execution-handler contract
-- [ ] next-available-open execution policy
-- [ ] fill processing
-- [ ] portfolio valuation history
-- [ ] manual deterministic oracle
-- [ ] complete end-to-end test
+- [x] frozen temporal and financial contracts
+- [x] strategy contract
+- [x] Buy-and-Hold strategy
+- [x] signal semantics
+- [x] signed position representation
+- [x] Portfolio state and fill-driven accounting
+- [x] deterministic position-sizing policy
+- [x] order generation
+- [x] next-open `ExecutionHandler`
+- [x] execution-time Buy-side buying-power clipping
+- [x] complete `BacktestEngine` lifecycle integration
+- [x] end-of-session Portfolio valuation and snapshot history
+- [x] manual deterministic oracle
+- [x] complete end-to-end validation
 
 ---
 
 ## Recommended Implementation Order
 
-### 1. Strategy Contract
+### 1. Freeze Temporal and Financial Contracts
+
+Before implementing the trading layer, define:
+
+- intra-session causal ordering;
+- Strategy observation semantics;
+- signal meaning;
+- position representation;
+- sizing and buying-power boundaries;
+- next-open execution semantics;
+- fill-driven accounting;
+- valuation and snapshot timing;
+- final-session pending-order behavior.
+
+The contract must prevent same-session execution of decisions generated from that session's completed close.
+
+---
+
+### 2. Implement Strategy Contract and Buy-and-Hold
 
 Define how a strategy:
 
@@ -712,154 +738,234 @@ Define how a strategy:
 - owns strategy-specific state;
 - emits trading intent.
 
-The strategy must not mutate the portfolio.
-
----
-
-### 2. Implement Buy-and-Hold
-
-Use Buy-and-Hold as the first strategy because it minimizes strategy complexity while exercising the complete event flow.
-
-Do not introduce the moving-average strategy yet.
-
----
-
-### 3. Define Signal Semantics
-
-The MVP trading behavior requires:
-
-- `Long`
-- `Flat`
-
-`Short` remains part of the durable signal protocol, but short-selling behavior is outside the MVP.
+Use Buy-and-Hold as the first production strategy because it minimizes strategy complexity while exercising the event flow.
 
 Signals express target exposure only.
 
-They must not contain hidden execution behavior.
+The strategy must not mutate Portfolio or choose execution behavior.
 
 ---
 
-### 4. Define Position Sizing
+### 3. Implement Portfolio State and Accounting
 
-Implement a simple deterministic policy sufficient to convert a valid signal into an order quantity.
+Portfolio owns:
 
-The policy must be explicit and reproducible.
-
-Do not implement advanced sizing.
-
----
-
-### 5. Implement Order Generation
-
-Orders must explicitly carry the information required by `MVP-scope.md`.
-
-Signal-to-order conversion belongs outside the strategy.
-
----
-
-### 6. Implement Portfolio State
-
-The portfolio owns:
-
+- initial capital;
 - cash;
-- position quantity;
+- signed position quantity;
+- latest mark;
 - market value;
-- total equity;
-- valuation history.
+- equity;
+- chronological snapshot history.
 
-State transitions must be easy to inspect and test.
+Only `FillEvent` changes executed cash and holdings.
+
+Execution accounting and end-of-session valuation must remain separate operations.
 
 ---
 
-### 7. Implement Execution
+### 4. Implement Position Sizing and Order Generation
+
+Convert strategy intent into a target position using:
+
+```text
+SignalEvent
++
+current executed Portfolio state
++
+observable reference price
++
+configured target allocation
+→ target position
+```
+
+Then convert:
+
+```text
+target position - current position
+→ optional OrderEvent
+```
+
+Sizing must use information available at decision time and must not assume the future execution price.
+
+Execution-time affordability remains a separate responsibility.
+
+---
+
+### 5. Implement Next-Open Execution
 
 Implement the fixed MVP rule:
 
-> An order generated after a completed daily bar fills at the next available daily open.
+> An order generated after a completed daily bar is considered for execution at the first available later daily open.
 
-The execution layer determines the fill timing and simulated execution price.
+The execution layer owns at most one pending market order.
 
-The strategy does not.
+For Buy orders, execution-time cash and the actual open price determine the maximum affordable quantity.
 
----
+The deterministic MVP may therefore clip the requested quantity.
 
-### 8. Implement Fill Processing
+A valid execution attempt consumes the pending order, including when the approved Buy quantity is zero.
 
-A fill is the event that changes holdings and cash.
-
-Portfolio accounting after a fill must be deterministic and testable.
+No residual order remains pending.
 
 ---
 
-### 9. Build the Manual Oracle
+### 6. Integrate the Complete Lifecycle into `BacktestEngine`
 
-Create a tiny artificial dataset with manually calculated expected values for:
+The engine coordinates the complete event chain while domain logic remains inside the owning components.
+
+The required ordering is:
+
+```text
+previous pending order
+→ Open(t)
+→ optional FillEvent(t)
+→ Portfolio.apply_fill()
+
+→ completed MarketEvent(t)
+→ Strategy
+→ optional SignalEvent(t)
+→ PositionSizer using Close(t)
+→ optional OrderEvent(t)
+→ ExecutionHandler pending state
+
+→ Portfolio.mark_to_market(Close(t))
+→ PortfolioSnapshot(t)
+```
+
+`step()` remains the incremental observable boundary.
+
+A returned event has already been processed internally by the engine.
+
+The engine must process all event work for the active session before loading another historical bar.
+
+---
+
+### 7. Build and Validate the Manual Oracle
+
+Create a tiny synthetic scenario with manually calculated expected values for:
 
 - bars;
+- event ordering;
 - signal timing;
 - order timing;
+- requested quantity;
+- approved quantity;
 - fill timing;
 - fill price;
-- quantity;
 - cash;
-- position;
+- signed position quantity;
 - market value;
-- equity.
+- equity;
+- Portfolio snapshots.
 
-This oracle becomes the most important integration fixture in the project.
+The expected values must be calculated independently from the production code under test.
+
+The oracle becomes the principal Phase 3 end-to-end correctness reference.
 
 ---
 
 ## Required Validation
 
-Test independently:
-
 ### Strategy
 
-- initial state;
+Verify:
+
+- valid Strategy configuration;
 - correct signal creation;
-- no unintended repeated entry signals.
-
-### Position Sizing
-
-- deterministic quantity;
-- edge conditions required by the MVP.
+- no unintended repeated Buy-and-Hold entry signals;
+- unrelated symbols do not consume Strategy state;
+- deterministic repeated behavior.
 
 ### Portfolio
 
+Verify:
+
 - initial capital;
-- fill-driven quantity updates;
-- cash changes;
-- market value;
-- equity.
+- fill-driven cash and position updates;
+- signed position arithmetic;
+- correct fee treatment;
+- mark-to-market calculation;
+- chronological snapshots;
+- separation between execution accounting and valuation.
+
+### Position Sizing and Order Generation
+
+Verify:
+
+- deterministic target quantity;
+- reference equity from current executed state;
+- `Long` and `Flat` target behavior;
+- zero-delta no-order behavior;
+- correct Buy and Sell deltas;
+- rejection of short-producing targets under the MVP policy;
+- no Portfolio mutation.
 
 ### Execution
 
-- order is not filled on the signal bar;
-- fill occurs at the next available open;
-- correct fill timestamp;
-- correct fill price;
-- deterministic full fill.
+Verify:
+
+- same-session execution is impossible;
+- execution occurs at the first eligible later open;
+- Buy quantity is clipped when execution-time cash is insufficient;
+- zero-approved Buy attempts produce no fill;
+- Sell orders execute the requested quantity;
+- one eligible attempt consumes the complete pending order;
+- execution does not mutate Portfolio directly;
+- final pending orders can be discarded without synthetic execution.
+
+### Engine Integration
+
+Verify:
+
+- `MarketEvent → SignalEvent → OrderEvent` causal ordering;
+- next-session `FillEvent` appears before that session's `MarketEvent`;
+- Portfolio reflects a Fill before the Fill is returned by `step()`;
+- all current-session events complete before the next bar is loaded;
+- exactly one close snapshot is produced per completed session;
+- final-session pending orders do not fabricate a fill;
+- repeated calls after completion produce no additional work;
+- complete event and Portfolio histories are deterministic.
 
 ### End-to-End
 
-The complete backtest must reproduce the manual oracle exactly.
+The complete backtest must reproduce the independent manual oracle exactly.
+
+The canonical Phase 3 oracle validates:
+
+```text
+Long signal
+→ Buy order
+→ upward-gap execution clipping
+→ Buy fill
+→ invested Portfolio valuation
+→ Flat signal
+→ Sell order
+→ Sell fill
+→ return to cash
+```
 
 ---
 
 ## Exit Criteria
 
-Phase 3 is complete when:
+Phase 3 is ready for closure when:
 
-- [ ] Buy-and-Hold runs through the complete event lifecycle;
-- [ ] signal, order, and fill remain separate concepts;
-- [ ] the next-open execution rule is enforced;
-- [ ] cash and position accounting are correct;
-- [ ] portfolio equity matches the manual oracle;
-- [ ] the full deterministic end-to-end test passes;
-- [ ] the complete lifecycle can be explained clearly.
+- [x] Buy-and-Hold runs through the complete event lifecycle;
+- [x] signal, order, and fill remain separate concepts;
+- [x] a decision generated from `Close(t)` cannot execute at `Open(t)`;
+- [x] next-open execution is enforced deterministically;
+- [x] execution-time Buy clipping prevents accidental leverage;
+- [x] cash and signed position accounting are correct;
+- [x] each completed session produces exactly one Portfolio snapshot;
+- [x] final-session pending orders terminate without synthetic execution;
+- [x] the complete observable event sequence matches the manual oracle;
+- [x] Portfolio snapshots and final equity match the manual oracle;
+- [x] repeated runs produce identical event and Portfolio histories;
+- [x] the complete lifecycle can be explained clearly;
+- [x] the full Debug and Release test suites pass.
 
-At this point, the project has a functioning event-driven backtesting engine.
+At this point, the project has a functioning deterministic event-driven backtesting engine and is ready to move to Phase 4 after the Phase 3 documentation closure pass.
 
 ---
 
