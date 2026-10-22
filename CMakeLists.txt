@@ -32,6 +32,7 @@ target_sources(
         src/portfolio/order_generator.cpp
         src/execution/execution_handler.cpp
         src/indicators/simple_moving_average.cpp
+        src/indicators/exponential_moving_average.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -51,6 +52,7 @@ target_sources(
             include/backtester/portfolio/order_generator.hpp
             include/backtester/execution/execution_handler.hpp
             include/backtester/indicators/simple_moving_average.hpp
+            include/backtester/indicators/exponential_moving_average.hpp
 )
 
 target_compile_features(
