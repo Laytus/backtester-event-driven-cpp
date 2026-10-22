@@ -31,6 +31,7 @@ add_executable(
     test_momentum.cpp
     test_macd.cpp
     test_relative_strength_index.cpp
+    test_rolling_min_max.cpp
 )
 
 target_link_libraries(
