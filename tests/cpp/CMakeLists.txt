@@ -30,6 +30,7 @@ add_executable(
     test_exponential_moving_average.cpp
     test_momentum.cpp
     test_macd.cpp
+    test_relative_strength_index.cpp
 )
 
 target_link_libraries(

@@ -35,6 +35,7 @@ target_sources(
         src/indicators/exponential_moving_average.cpp
         src/indicators/momentum.cpp
         src/indicators/macd.cpp
+        src/indicators/relative_strength_index.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -57,6 +58,7 @@ target_sources(
             include/backtester/indicators/exponential_moving_average.hpp
             include/backtester/indicators/momentum.hpp
             include/backtester/indicators/macd.hpp
+            include/backtester/indicators/relative_strength_index.hpp
 )
 
 target_compile_features(
