@@ -33,6 +33,7 @@ target_sources(
         src/execution/execution_handler.cpp
         src/indicators/simple_moving_average.cpp
         src/indicators/exponential_moving_average.cpp
+        src/indicators/momentum.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -53,6 +54,7 @@ target_sources(
             include/backtester/execution/execution_handler.hpp
             include/backtester/indicators/simple_moving_average.hpp
             include/backtester/indicators/exponential_moving_average.hpp
+            include/backtester/indicators/momentum.hpp
 )
 
 target_compile_features(

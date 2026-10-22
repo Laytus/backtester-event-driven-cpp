@@ -28,6 +28,7 @@ add_executable(
     test_phase_3_end-to-end.cpp
     test_simple_moving_average.cpp
     test_exponential_moving_average.cpp
+    test_momentum.cpp
 )
 
 target_link_libraries(
