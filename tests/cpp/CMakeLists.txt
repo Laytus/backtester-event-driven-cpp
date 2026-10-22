@@ -29,6 +29,7 @@ add_executable(
     test_simple_moving_average.cpp
     test_exponential_moving_average.cpp
     test_momentum.cpp
+    test_macd.cpp
 )
 
 target_link_libraries(
