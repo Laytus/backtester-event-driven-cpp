@@ -31,6 +31,7 @@ target_sources(
         src/portfolio/position_sizer.cpp
         src/portfolio/order_generator.cpp
         src/execution/execution_handler.cpp
+        src/indicators/simple_moving_average.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -49,6 +50,7 @@ target_sources(
             include/backtester/portfolio/position_sizer.hpp
             include/backtester/portfolio/order_generator.hpp
             include/backtester/execution/execution_handler.hpp
+            include/backtester/indicators/simple_moving_average.hpp
 )
 
 target_compile_features(
