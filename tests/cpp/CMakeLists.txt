@@ -32,6 +32,7 @@ add_executable(
     test_macd.cpp
     test_relative_strength_index.cpp
     test_rolling_min_max.cpp
+    test_statistics.cpp
 )
 
 target_link_libraries(

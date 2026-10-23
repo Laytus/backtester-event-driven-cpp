@@ -20,6 +20,7 @@ target_sources(
     backtester_core
     PRIVATE
         src/version.cpp
+        src/statistics/statistics.cpp
         src/market/bar.cpp
         src/data/csv_bar_reader.cpp
         src/data/historical_data_feed.cpp
@@ -61,6 +62,7 @@ target_sources(
             include/backtester/indicators/macd.hpp
             include/backtester/indicators/relative_strength_index.hpp
             include/backtester/indicators/rolling_min_max.hpp
+            include/backtester/statistics/statistics.hpp
 )
 
 target_compile_features(
