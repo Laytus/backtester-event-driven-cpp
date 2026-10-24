@@ -34,6 +34,7 @@ add_executable(
     test_rolling_min_max.cpp
     test_statistics.cpp
     test_bollinger_bands.cpp
+    test_indicators_integration.cpp
 )
 
 target_link_libraries(
