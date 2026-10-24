@@ -38,12 +38,14 @@ target_sources(
         src/indicators/macd.cpp
         src/indicators/relative_strength_index.cpp
         src/indicators/rolling_min_max.cpp
+        src/indicators/bollinger_bands.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
             include
         FILES
             include/backtester/version.hpp
+            include/backtester/statistics/statistics.hpp
             include/backtester/market/bar.hpp
             include/backtester/data/csv_bar_reader.hpp
             include/backtester/data/historical_data_feed.hpp
@@ -62,7 +64,7 @@ target_sources(
             include/backtester/indicators/macd.hpp
             include/backtester/indicators/relative_strength_index.hpp
             include/backtester/indicators/rolling_min_max.hpp
-            include/backtester/statistics/statistics.hpp
+            include/backtester/indicators/bollinger_bands.hpp
 )
 
 target_compile_features(
