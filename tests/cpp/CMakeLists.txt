@@ -36,6 +36,7 @@ add_executable(
     test_bollinger_bands.cpp
     test_indicators_integration.cpp
     test_sma_crossover_strategy.cpp
+    test_ema_crossover_strategy.cpp
 )
 
 target_link_libraries(
