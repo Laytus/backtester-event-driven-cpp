@@ -28,6 +28,7 @@ target_sources(
         src/events/event_queue.cpp
         src/engine/backtest_engine.cpp
         src/strategy/buy_and_hold_strategy.cpp
+        src/strategy/sma_crossover_strategy.cpp
         src/portfolio/portfolio.cpp
         src/portfolio/position_sizer.cpp
         src/portfolio/order_generator.cpp
@@ -54,6 +55,7 @@ target_sources(
             include/backtester/engine/backtest_engine.hpp
             include/backtester/strategy/strategy.hpp
             include/backtester/strategy/buy_and_hold_strategy.hpp
+            include/backtester/strategy/sma_crossover_strategy.hpp
             include/backtester/portfolio/portfolio.hpp
             include/backtester/portfolio/position_sizer.hpp
             include/backtester/portfolio/order_generator.hpp
