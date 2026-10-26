@@ -39,6 +39,7 @@ add_executable(
     test_ema_crossover_strategy.cpp
     test_price_filter_strategy.cpp
     test_channel_breakout_strategy.cpp
+    test_momentum_strategy.cpp
 )
 
 target_link_libraries(
