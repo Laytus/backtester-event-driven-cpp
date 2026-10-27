@@ -46,6 +46,7 @@ target_sources(
         src/indicators/relative_strength_index.cpp
         src/indicators/rolling_min_max.cpp
         src/indicators/bollinger_bands.cpp
+        src/performance/return_series.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -79,6 +80,7 @@ target_sources(
             include/backtester/indicators/relative_strength_index.hpp
             include/backtester/indicators/rolling_min_max.hpp
             include/backtester/indicators/bollinger_bands.hpp
+            include/backtester/performance/return_series.hpp
 )
 
 target_compile_features(

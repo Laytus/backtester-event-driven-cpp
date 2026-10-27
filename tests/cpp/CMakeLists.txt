@@ -42,6 +42,7 @@ add_executable(
     test_momentum_strategy.cpp
     test_macd_crossover_strategy.cpp
     test_rsi_based_strategy.cpp
+    test_return_series.cpp
 )
 
 target_link_libraries(
