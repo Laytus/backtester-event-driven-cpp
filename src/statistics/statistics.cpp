@@ -9,6 +9,11 @@ namespace backtester::statistics {
 
 namespace {
 
+enum class VarianceConvention {
+    Population,
+    Sample
+};
+
 // Neumaier compensated summation.
 struct CompensatedSum final {
     double sum{0.0};
@@ -32,12 +37,30 @@ struct CompensatedSum final {
     }
 };
 
+struct MomentsResult final {
+    double mean;
+    double standard_deviation;
+};
+
 template <typename Range>
 [[nodiscard]]
-PopulationMoments population_moments_impl(const Range& values) {
-    if (values.empty()) {
+MomentsResult moments_impl(
+    const Range& values,
+    VarianceConvention convention
+) {
+    const std::size_t count = values.size();
+
+    if (count == 0) {
         throw std::invalid_argument(
             "Statistics input must not be empty"
+        );
+    }
+
+    const bool sample = convention == VarianceConvention::Sample;
+
+    if (sample && count < 2) {
+        throw std::invalid_argument(
+            "Sample statistics require at least two observations"
         );
     }
 
@@ -52,7 +75,8 @@ PopulationMoments population_moments_impl(const Range& values) {
         }
 
         largest_absolute_value = std::max(
-            largest_absolute_value, std::abs(observation)
+            largest_absolute_value,
+            std::abs(observation)
         );
     }
 
@@ -62,8 +86,9 @@ PopulationMoments population_moments_impl(const Range& values) {
 
     int exponent = 0;
     std::frexp(largest_absolute_value, &exponent);
+
     const double scale = std::ldexp(1.0, exponent - 1);
-    const double count = static_cast<double>(values.size());
+    const double n = static_cast<double>(count);
 
     // Center at the first observation before accumulating.
     const double anchor = *values.begin();
@@ -80,8 +105,8 @@ PopulationMoments population_moments_impl(const Range& values) {
         offset_sum.add(normalized - scaled_anchor);
     }
 
-    const double scaled_mean = raw_sum.value() / count;
-    const double mean_offset = offset_sum.value() / count;
+    const double scaled_mean = raw_sum.value() / n;
+    const double mean_offset = offset_sum.value() / n;
 
     // Population squared deviations in scaled coordinates.
     CompensatedSum squared_deviations;
@@ -93,7 +118,13 @@ PopulationMoments population_moments_impl(const Range& values) {
         squared_deviations.add(deviation * deviation);
     }
 
-    const double scaled_variance = squared_deviations.value() / count;
+    // Population: N. Sample: N - 1 (Besel correction).
+    const double divisor = sample
+        ? static_cast<double>(count - 1)
+        : n;
+
+    const double scaled_variance = squared_deviations.value() / divisor;
+
     const double mean = scaled_mean * scale;
     const double standard_deviation = std::sqrt(scaled_variance) * scale;
 
@@ -109,11 +140,39 @@ PopulationMoments population_moments_impl(const Range& values) {
 }  // namespace
 
 PopulationMoments population_moments(std::span<const double> values) {
-    return population_moments_impl(values);
+    const auto result = moments_impl(
+        values,
+        VarianceConvention::Population
+    );
+
+    return {result.mean, result.standard_deviation};
 }
 
 PopulationMoments population_moments(const std::deque<double>& values) {
-    return population_moments_impl(values);
+    const auto result = moments_impl(
+        values,
+        VarianceConvention::Population
+    );
+
+    return {result.mean, result.standard_deviation};
+}
+
+SampleMoments sample_moments(std::span<const double> values) {
+    const auto result = moments_impl(
+        values,
+        VarianceConvention::Sample
+    );
+
+    return {result.mean, result.standard_deviation};
+}
+
+SampleMoments sample_moments(const std::deque<double>& values) {
+    const auto result = moments_impl(
+        values,
+        VarianceConvention::Sample
+    );
+
+    return {result.mean, result.standard_deviation};
 }
 
 }  // namespace backtester::statistics

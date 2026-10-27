@@ -16,11 +16,12 @@
 
 namespace {
 
-using backtester::statistics::PopulationMoments;
 using backtester::statistics::population_moments;
+using backtester::statistics::sample_moments;
 
+template <typename Moments>
 void require_moments(
-    const PopulationMoments& actual,
+    const Moments& actual,
     double expected_mean,
     double expected_standard_deviation,
     double relative_tolerance = 1e-12
@@ -50,6 +51,16 @@ void require_matching_containers(const std::vector<double>& observations) {
 
     const auto contiguous = population_moments(std::span<const double>(observations));
     const auto noncontiguous = population_moments(deque);
+
+    REQUIRE(contiguous.mean == noncontiguous.mean);
+    REQUIRE(contiguous.standard_deviation == noncontiguous.standard_deviation);
+}
+
+void require_matching_sample_containers(const std::vector<double>& observations) {
+    const std::deque<double> deque(observations.begin(), observations.end());
+
+    const auto contiguous = sample_moments(std::span<const double>(observations));
+    const auto noncontiguous = sample_moments(deque);
 
     REQUIRE(contiguous.mean == noncontiguous.mean);
     REQUIRE(contiguous.standard_deviation == noncontiguous.standard_deviation);
@@ -365,4 +376,314 @@ TEST_CASE("Statistics remains correct on a long balanced sequence") {
         1.0
     );
     require_matching_containers(observations);
+}
+
+// -----------------------------------------------------------------------------
+// Sample-moment regression tests (variance denominator N - 1).
+// The population tests above remain unchanged in their numerical expectations.
+// -----------------------------------------------------------------------------
+
+TEST_CASE("Statistics sample moments reject empty spans and deques") {
+    const std::span<const double> empty_span;
+    const std::deque<double> empty_deque;
+
+    REQUIRE_THROWS_AS(sample_moments(empty_span), std::invalid_argument);
+    REQUIRE_THROWS_AS(sample_moments(empty_deque), std::invalid_argument);
+}
+
+TEST_CASE("Statistics sample moments reject singleton spans and deques") {
+    for (const double observation : {0.0, 42.0, -1e200}) {
+        const std::array<double, 1> values{observation};
+        REQUIRE_THROWS_AS(
+            sample_moments(std::span<const double>(values)),
+            std::invalid_argument
+        );
+        REQUIRE_THROWS_AS(
+            sample_moments(std::deque<double>{observation}),
+            std::invalid_argument
+        );
+    }
+}
+
+TEST_CASE("Statistics sample moments reject NaN at every position") {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    for (const std::vector<double>& values : {
+        std::vector<double>{nan, 1.0, 2.0},
+        std::vector<double>{1.0, nan, 2.0},
+        std::vector<double>{1.0, 2.0, nan}
+    }) {
+        REQUIRE_THROWS_AS(
+            sample_moments(std::span<const double>(values)),
+            std::invalid_argument
+        );
+        REQUIRE_THROWS_AS(
+            sample_moments(std::deque<double>(values.begin(), values.end())),
+            std::invalid_argument
+        );
+    }
+}
+
+TEST_CASE("Statistics sample moments reject positive and negative infinity") {
+    const double inf = std::numeric_limits<double>::infinity();
+
+    for (const double invalid : {inf, -inf}) {
+        const std::array<double, 3> values{1.0, invalid, 3.0};
+        REQUIRE_THROWS_AS(
+            sample_moments(std::span<const double>(values)),
+            std::invalid_argument
+        );
+        REQUIRE_THROWS_AS(
+            sample_moments(std::deque<double>(values.begin(), values.end())),
+            std::invalid_argument
+        );
+    }
+}
+
+TEST_CASE("Statistics sample moments use N minus one for two observations") {
+    const std::array<double, 2> values{2.0, 4.0};
+    require_moments(
+        sample_moments(std::span<const double>(values)),
+        3.0,
+        std::sqrt(2.0)
+    );
+    require_moments(
+        population_moments(std::span<const double>(values)),
+        3.0,
+        1.0
+    );
+}
+
+TEST_CASE("Statistics sample and population moments use different divisors") {
+    const std::array<double, 4> values{1.0, 2.0, 3.0, 4.0};
+    const auto population = population_moments(std::span<const double>(values));
+    const auto sample = sample_moments(std::span<const double>(values));
+
+    require_moments(population, 2.5, std::sqrt(1.25));
+    require_moments(sample, 2.5, std::sqrt(5.0 / 3.0));
+    REQUIRE(sample.standard_deviation > population.standard_deviation);
+}
+
+TEST_CASE("Statistics sample moments match the approved Oracle A") {
+    const std::array<double, 5> returns{0.0, 0.05, -0.02, 0.10, 0.0};
+    require_moments(
+        sample_moments(std::span<const double>(returns)),
+        0.026,
+        0.04878524367060187
+    );
+}
+
+TEST_CASE("Statistics sample moments handle signed and fractional data") {
+    const std::array<double, 5> signed_values{-4.0, -2.0, 0.0, 2.0, 4.0};
+    require_moments(
+        sample_moments(std::span<const double>(signed_values)),
+        0.0,
+        std::sqrt(10.0)
+    );
+
+    const std::array<double, 3> fractions{1.5, 2.5, 5.0};
+    require_moments(
+        sample_moments(std::span<const double>(fractions)),
+        3.0,
+        std::sqrt(13.0 / 4.0)
+    );
+}
+
+TEST_CASE("Statistics sample moments return zero for all-zero observations") {
+    const std::array<double, 4> values{0.0, -0.0, 0.0, -0.0};
+    require_moments(
+        sample_moments(std::span<const double>(values)),
+        0.0,
+        0.0
+    );
+}
+
+TEST_CASE("Statistics sample moments return zero deviation for constant data") {
+    for (const double constant : {8.0, -12.0, 1e200}) {
+        const std::vector<double> values(21, constant);
+        require_moments(
+            sample_moments(std::span<const double>(values)),
+            constant,
+            0.0
+        );
+        require_matching_sample_containers(values);
+    }
+}
+
+TEST_CASE("Statistics sample moments support spans over subranges") {
+    const std::array<double, 7> values{
+        -1000.0, 99.0, 100.0, 101.0, 102.0, 103.0, 1000.0
+    };
+    const auto subset = std::span<const double>(values).subspan(1, 5);
+    require_moments(sample_moments(subset), 101.0, std::sqrt(2.5));
+}
+
+TEST_CASE("Statistics sample moments agree between spans and deques") {
+    require_matching_sample_containers({100.0, 102.0, 104.0});
+    require_matching_sample_containers({-4.0, 2.0, 0.0, -4.0, 2.0, 8.0});
+    require_matching_sample_containers({1e16, 1.0, -1e16});
+    require_matching_sample_containers({0.0, 0.0});
+}
+
+TEST_CASE("Statistics sample moments preserve their input containers") {
+    std::vector<double> values{3.0, 1.0, 4.0, 1.0, 5.0};
+    std::deque<double> deque(values.begin(), values.end());
+    const auto original_vector = values;
+    const auto original_deque = deque;
+
+    (void)sample_moments(std::span<const double>(values));
+    (void)sample_moments(deque);
+
+    REQUIRE(values == original_vector);
+    REQUIRE(deque == original_deque);
+}
+
+TEST_CASE("Statistics sample moments are deterministic across repeated queries") {
+    const std::vector<double> values{100.0, 104.0, 96.0, 103.0, 97.0};
+    const auto input = std::span<const double>(values);
+    const auto reference = sample_moments(input);
+
+    for (int repetition = 0; repetition < 20; ++repetition) {
+        const auto actual = sample_moments(input);
+        REQUIRE(actual.mean == reference.mean);
+        REQUIRE(actual.standard_deviation == reference.standard_deviation);
+    }
+}
+
+TEST_CASE("Statistics sample dispersion is invariant under sign reversal") {
+    const std::array<double, 3> positive{10.0, 20.0, 30.0};
+    const std::array<double, 3> negative{-10.0, -20.0, -30.0};
+
+    require_moments(
+        sample_moments(std::span<const double>(positive)),
+        20.0,
+        10.0
+    );
+    require_moments(
+        sample_moments(std::span<const double>(negative)),
+        -20.0,
+        10.0
+    );
+}
+
+TEST_CASE("Statistics sample moments are invariant under reversing order") {
+    std::vector<double> values{100.0, 105.0, 99.0, 100.0, 101.0, 103.0};
+    const auto forward = sample_moments(std::span<const double>(values));
+    std::reverse(values.begin(), values.end());
+    const auto reverse = sample_moments(std::span<const double>(values));
+
+    REQUIRE(reverse.mean == Catch::Approx(forward.mean).epsilon(1e-13));
+    REQUIRE(
+        reverse.standard_deviation ==
+        Catch::Approx(forward.standard_deviation).epsilon(1e-13)
+    );
+}
+
+TEST_CASE("Statistics sample moments retain small changes near large means") {
+    const double large = 1e16;
+    const std::array<double, 2> values{large, large + 2.0};
+
+    const auto actual = sample_moments(std::span<const double>(values));
+    REQUIRE(actual.mean == Catch::Approx(large).epsilon(1e-15));
+    REQUIRE(actual.standard_deviation == Catch::Approx(std::sqrt(2.0)).epsilon(1e-12));
+}
+
+TEST_CASE("Statistics sample compensated mean survives cancellation") {
+    const std::array<double, 3> values{1e16, 1.0, -1e16};
+    require_moments(
+        sample_moments(std::span<const double>(values)),
+        1.0 / 3.0,
+        1e16
+    );
+}
+
+TEST_CASE("Statistics sample moments reject overflowing dispersion") {
+    const double max = std::numeric_limits<double>::max();
+    const std::array<double, 2> values{-max, max};
+
+    REQUIRE_THROWS_AS(
+        sample_moments(std::span<const double>(values)),
+        std::overflow_error
+    );
+}
+
+TEST_CASE("Statistics sample moments handle maximum finite constants") {
+    const double max = std::numeric_limits<double>::max();
+    const std::array<double, 3> values{max, max, max};
+    require_moments(
+        sample_moments(std::span<const double>(values)),
+        max,
+        0.0
+    );
+}
+
+TEST_CASE("Statistics sample moments retain constant subnormal values") {
+    const double tiny = std::numeric_limits<double>::denorm_min();
+    const std::array<double, 3> values{tiny, tiny, tiny};
+    const auto actual = sample_moments(std::span<const double>(values));
+    REQUIRE(actual.mean == tiny);
+    REQUIRE(actual.standard_deviation == 0.0);
+}
+
+TEST_CASE("Statistics sample moments avoid squaring overflow for large inputs") {
+    const std::array<double, 3> values{-1e300, 0.0, 1e300};
+    require_moments(
+        sample_moments(std::span<const double>(values)),
+        0.0,
+        1e300
+    );
+}
+
+TEST_CASE("Statistics sample moments match independent integer-data oracles") {
+    std::mt19937 generator{0x51A715u};
+    std::uniform_int_distribution<int> lengths{2, 35};
+    std::uniform_int_distribution<int> values_distribution{-50, 50};
+
+    for (int trial = 0; trial < 250; ++trial) {
+        const int length = lengths(generator);
+        std::vector<double> values;
+        values.reserve(static_cast<std::size_t>(length));
+
+        double sum = 0.0;
+        for (int index = 0; index < length; ++index) {
+            const double value = static_cast<double>(values_distribution(generator));
+            values.push_back(value);
+            sum += value;
+        }
+
+        const double mean = sum / static_cast<double>(length);
+        double sum_of_squares = 0.0;
+        for (double value : values) {
+            const double deviation = value - mean;
+            sum_of_squares += deviation * deviation;
+        }
+
+        const double expected_sd =
+            std::sqrt(sum_of_squares / static_cast<double>(length - 1));
+
+        require_moments(
+            sample_moments(std::span<const double>(values)),
+            mean,
+            expected_sd,
+            1e-11
+        );
+        require_matching_sample_containers(values);
+    }
+}
+
+TEST_CASE("Statistics sample moments remain correct over long balanced inputs") {
+    std::vector<double> values;
+    values.reserve(100'000);
+
+    for (int index = 0; index < 50'000; ++index) {
+        values.push_back(0.0);
+        values.push_back(2.0);
+    }
+
+    require_moments(
+        sample_moments(std::span<const double>(values)),
+        1.0,
+        std::sqrt(100'000.0 / 99'999.0)
+    );
+    require_matching_sample_containers(values);
 }

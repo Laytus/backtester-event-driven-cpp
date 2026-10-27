@@ -6,13 +6,18 @@
 namespace backtester::statistics {
 
 struct PopulationMoments final {
-    double mean;
-    double standard_deviation;
+    double mean{0.0};
+    double standard_deviation{0.0};
 };
 
-// Computes the arithmetic mean and population standard deviation.
+struct SampleMoments final {
+    double mean{0.0};
+    double standard_deviation{0.0};
+};
 
-// Requires a non-empty collection of finite observations.
+// Population statistics: variance divisor N.
+// Requires at least one finite observation.
+
 [[nodiscard]]
 PopulationMoments population_moments(std::span<const double> values);
 
@@ -20,5 +25,14 @@ PopulationMoments population_moments(std::span<const double> values);
 // constructing a temp contiguous buffer.
 [[nodiscard]]
 PopulationMoments population_moments(const std::deque<double>& values);
+
+// Sample statistics: variance divisor N - 1.
+// Requires at least two finite observations.
+
+[[nodiscard]]
+SampleMoments sample_moments(std::span<const double> values);
+
+[[nodiscard]]
+SampleMoments sample_moments(const std::deque<double>& values);
 
 }  // namespace backtester::statistics
