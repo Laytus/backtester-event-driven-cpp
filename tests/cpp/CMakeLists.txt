@@ -40,6 +40,7 @@ add_executable(
     test_price_filter_strategy.cpp
     test_channel_breakout_strategy.cpp
     test_momentum_strategy.cpp
+    test_macd_crossover_strategy.cpp
 )
 
 target_link_libraries(

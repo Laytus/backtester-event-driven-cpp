@@ -33,6 +33,7 @@ target_sources(
         src/strategy/price_filter_strategy.cpp
         src/strategy/channel_breakout_strategy.cpp
         src/strategy/momentum_strategy.cpp
+        src/strategy/macd_crossover_strategy.cpp
         src/portfolio/portfolio.cpp
         src/portfolio/position_sizer.cpp
         src/portfolio/order_generator.cpp
@@ -64,6 +65,7 @@ target_sources(
             include/backtester/strategy/price_filter_strategy.hpp
             include/backtester/strategy/channel_breakout_strategy.hpp
             include/backtester/strategy/momentum_strategy.hpp
+            include/backtester/strategy/macd_crossover_strategy.hpp
             include/backtester/portfolio/portfolio.hpp
             include/backtester/portfolio/position_sizer.hpp
             include/backtester/portfolio/order_generator.hpp
