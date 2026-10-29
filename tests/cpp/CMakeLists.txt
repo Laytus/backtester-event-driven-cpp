@@ -48,6 +48,7 @@ add_executable(
     test_relative_metrics.cpp
     test_benchmark_comparison.cpp
     test_strategy_performance_integration.cpp
+    test_manual_quantitative_oracle.cpp
 )
 
 target_link_libraries(
