@@ -47,6 +47,7 @@ add_executable(
     test_active_return_series.cpp
     test_relative_metrics.cpp
     test_benchmark_comparison.cpp
+    test_strategy_performance_integration.cpp
 )
 
 target_link_libraries(
