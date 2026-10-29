@@ -48,6 +48,8 @@ target_sources(
         src/indicators/bollinger_bands.cpp
         src/performance/return_series.cpp
         src/performance/performance_metrics.cpp
+        src/performance/active_return_series.cpp
+        src/performance/relative_metrics.cpp
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS 
@@ -83,6 +85,8 @@ target_sources(
             include/backtester/indicators/bollinger_bands.hpp
             include/backtester/performance/return_series.hpp
             include/backtester/performance/performance_metrics.hpp
+            include/backtester/performance/active_return_series.hpp
+            include/backtester/performance/relative_metrics.hpp
 )
 
 target_compile_features(

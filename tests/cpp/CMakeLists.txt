@@ -44,6 +44,9 @@ add_executable(
     test_rsi_based_strategy.cpp
     test_return_series.cpp
     test_performance_metrics.cpp
+    test_active_return_series.cpp
+    test_relative_metrics.cpp
+    test_benchmark_comparison.cpp
 )
 
 target_link_libraries(
